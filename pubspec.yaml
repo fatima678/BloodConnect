@@ -1,0 +1,49 @@
+name: blood_donation_app
+description: "A new Flutter project."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.4
+
+dependencies:
+
+# flutter:
+# sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  country_code_picker: ^3.4.1
+  carousel_slider: ^5.1.2
+
+  google_maps_flutter: ^2.17.0
+  geolocator: ^13.0.1
+  geocoding: ^4.0.0
+  # firebase_core: ^4.9.0
+  flutter_secure_storage: ^10.2.0
+  http: ^1.2.2
+  url_launcher: ^6.3.0
+  firebase_auth: 5.7.0
+  # firebase_messaging: 16.2.2
+  flutter_phone_direct_caller: ^2.2.1
+
+  firebase_core: ^3.1.1
+  firebase_messaging: ^15.0.1
+  flutter_local_notifications: ^21.0.0
+  shimmer: ^3.0.0
+  shared_preferences: ^2.5.5
+  # firebase_crashlytics: ^4.3.10
+  # firebase_analytics: ^11.6.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - lib/assets/Login-pana.png
+    - lib/assets/otp.jpg
+    - lib/assets/blood_donation.png
