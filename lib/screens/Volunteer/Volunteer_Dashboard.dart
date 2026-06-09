@@ -10,7 +10,8 @@ class VolunteerDashboardScreen extends StatefulWidget {
   const VolunteerDashboardScreen({super.key});
 
   @override
-  State<VolunteerDashboardScreen> createState() => _VolunteerDashboardScreenState();
+  State<VolunteerDashboardScreen> createState() =>
+      _VolunteerDashboardScreenState();
 }
 
 class _VolunteerDashboardScreenState extends State<VolunteerDashboardScreen> {
@@ -175,7 +176,9 @@ class _DashboardContentState extends State<DashboardContent> {
                         width: double.infinity,
                         color: Colors.grey[200],
                         child: const Center(
-                          child: CircularProgressIndicator(color: primaryMaroon),
+                          child: CircularProgressIndicator(
+                            color: primaryMaroon,
+                          ),
                         ),
                       )
                     : CarouselSlider.builder(
@@ -191,23 +194,33 @@ class _DashboardContentState extends State<DashboardContent> {
                         ),
                         itemBuilder: (context, index, realIndex) {
                           final imagePathOrUrl = _carouselImages[index];
-                          final isNetworkImage = imagePathOrUrl.startsWith('http://') || imagePathOrUrl.startsWith('https://');
+                          final isNetworkImage =
+                              imagePathOrUrl.startsWith('http://') ||
+                              imagePathOrUrl.startsWith('https://');
 
                           return isNetworkImage
                               ? Image.network(
                                   imagePathOrUrl,
                                   fit: BoxFit.cover,
                                   width: double.infinity,
-                                  errorBuilder: (context, error, stackTrace) => Container(
-                                    color: Colors.grey[300],
-                                    child: const Icon(Icons.broken_image, size: 60, color: Colors.grey),
-                                  ),
-                                  loadingBuilder: (context, child, loadingProgress) {
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      Container(
+                                        color: Colors.grey[300],
+                                        child: const Icon(
+                                          Icons.broken_image,
+                                          size: 60,
+                                          color: Colors.grey,
+                                        ),
+                                      ),
+                                  loadingBuilder:
+                                      (context, child, loadingProgress) {
                                     if (loadingProgress == null) return child;
                                     return Container(
                                       color: Colors.grey[200],
                                       child: const Center(
-                                        child: CircularProgressIndicator(color: primaryMaroon),
+                                        child: CircularProgressIndicator(
+                                          color: primaryMaroon,
+                                        ),
                                       ),
                                     );
                                   },
@@ -216,10 +229,15 @@ class _DashboardContentState extends State<DashboardContent> {
                                   imagePathOrUrl,
                                   fit: BoxFit.cover,
                                   width: double.infinity,
-                                  errorBuilder: (context, error, stackTrace) => Container(
-                                    color: Colors.grey[300],
-                                    child: const Icon(Icons.broken_image, size: 60, color: Colors.grey),
-                                  ),
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      Container(
+                                        color: Colors.grey[300],
+                                        child: const Icon(
+                                          Icons.broken_image,
+                                          size: 60,
+                                          color: Colors.grey,
+                                        ),
+                                      ),
                                 );
                         },
                       ),
@@ -260,19 +278,25 @@ class _DashboardContentState extends State<DashboardContent> {
                 childAspectRatio: 1.08,
                 children: [
                   _buildServiceCard(
-                    title: "Action 1",
+                    title: "Events",
                     icon: Icons.volunteer_activism,
-                    onTap: () {},
+                    onTap: () {
+                      Navigator.pushNamed(context, '/volunteer-events');
+                    },
                   ),
                   _buildServiceCard(
-                    title: "Action 2",
+                    title: "Admin Contact",
                     icon: Icons.assignment_turned_in_outlined,
-                    onTap: () {},
+                    onTap: () {
+                      Navigator.pushNamed(context, '/contact-admin');
+                    },
                   ),
                   _buildServiceCard(
-                    title: "Action 3",
-                    icon: Icons.analytics_outlined,
-                    onTap: () {},
+                    title: "Notifications",
+                    icon: Icons.notifications,
+                    onTap: () {
+                      Navigator.pushNamed(context, '/volunteer-notifications');
+                    },
                   ),
                   _buildServiceCard(
                     title: "Action 4",
@@ -341,11 +365,25 @@ class _DashboardContentState extends State<DashboardContent> {
                 CircleAvatar(
                   radius: 45,
                   backgroundColor: Colors.white,
-                  child: Icon(Icons.groups_rounded, size: 55, color: Color(0xFF6B0000)),
+                  child: Icon(
+                    Icons.groups_rounded,
+                    size: 55,
+                    color: Color(0xFF6B0000),
+                  ),
                 ),
                 SizedBox(height: 12),
-                Text("Welcome,", style: TextStyle(color: Colors.white, fontSize: 18)),
-                Text("Volunteer", style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+                Text(
+                  "Welcome,",
+                  style: TextStyle(color: Colors.white, fontSize: 18),
+                ),
+                Text(
+                  "Volunteer",
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ],
             ),
           ),
@@ -353,44 +391,81 @@ class _DashboardContentState extends State<DashboardContent> {
             child: ListView(
               padding: const EdgeInsets.symmetric(vertical: 8),
               children: [
-                _buildDrawerItem(Icons.dashboard, "Dashboard", onTap: () => Navigator.pop(context)),
-                _buildDrawerItem(Icons.bloodtype, "Blood Request Management", onTap: () {
-                  Navigator.pop(context);
-                  Navigator.pushNamed(context, '/blood-request-management');
-                }),
-                _buildDrawerItem(Icons.people, "Donor Data", onTap: () {
-                  Navigator.pop(context);
-                  Navigator.pushNamed(context, '/donor-data');
-                }),
-                _buildDrawerItem(Icons.card_giftcard, "Digital Certificate", onTap: () {
-                  Navigator.pop(context);
-                  Navigator.pushNamed(context, '/certificate-generation');
-                }),
-                _buildDrawerItem(Icons.notifications, "Notifications", onTap: () {
-                  Navigator.pop(context);
-                  Navigator.pushNamed(context, '/notifications');
-                }),
-                _buildDrawerItem(Icons.person, "My Profile", onTap: () {
-                  Navigator.pop(context);
-                  Navigator.pushNamed(context, '/volunteer-profile');
-                }),
-                _buildDrawerItem(Icons.settings, "Settings", onTap: () {
-                  Navigator.pop(context);
-                  Navigator.pushNamed(context, '/volunteer-settings');
-                }),
-                _buildDrawerItem(Icons.help_outline, "Help & Support", onTap: () {
-                  Navigator.pop(context);
-                  Navigator.pushNamed(context, '/help-support');
-                }),
+                _buildDrawerItem(
+                  Icons.dashboard,
+                  "Dashboard",
+                  onTap: () => Navigator.pop(context),
+                ),
+                _buildDrawerItem(
+                  Icons.bloodtype,
+                  "Blood Request Management",
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.pushNamed(context, '/blood-request-management');
+                  },
+                ),
+                _buildDrawerItem(
+                  Icons.people,
+                  "Donor Data",
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.pushNamed(context, '/donor-data');
+                  },
+                ),
+                _buildDrawerItem(
+                  Icons.card_giftcard,
+                  "Digital Certificate",
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.pushNamed(context, '/certificate-generation');
+                  },
+                ),
+                _buildDrawerItem(
+                  Icons.notifications,
+                  "Notifications",
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.pushNamed(context, '/notifications');
+                  },
+                ),
+                _buildDrawerItem(
+                  Icons.person,
+                  "My Profile",
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.pushNamed(context, '/volunteer-profile');
+                  },
+                ),
+                _buildDrawerItem(
+                  Icons.settings,
+                  "Settings",
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.pushNamed(context, '/volunteer-settings');
+                  },
+                ),
+                _buildDrawerItem(
+                  Icons.help_outline,
+                  "Help & Support",
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.pushNamed(context, '/help-support');
+                  },
+                ),
                 const Divider(),
                 ListTile(
                   leading: const Icon(Icons.logout, color: Colors.red),
-                  title: const Text("Logout", style: TextStyle(color: Colors.red)),
+                  title: const Text(
+                    "Logout",
+                    style: TextStyle(color: Colors.red),
+                  ),
                   onTap: () async {
                     Navigator.pop(context);
                     await AuthTokenService.clearSession();
                     if (!mounted) return;
-                    Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
+                    Navigator.of(
+                      context,
+                    ).pushNamedAndRemoveUntil('/role-selection', (route) => false);
                   },
                 ),
               ],

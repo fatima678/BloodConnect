@@ -20,8 +20,10 @@ class _VolunteerRegisterScreenState extends State<VolunteerRegisterScreen> {
   final TextEditingController phoneController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
 
+  String? selectedBloodGroup;
   bool isLoading = false;
 
+  final List<String> bloodGroups = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
   final String registerUrl = "https://manliness-smugness-qualm.ngrok-free.dev/api/register";
 
   Future<void> registerVolunteer() async {
@@ -33,6 +35,13 @@ class _VolunteerRegisterScreenState extends State<VolunteerRegisterScreen> {
     if (name.isEmpty || email.isEmpty || phone.isEmpty || password.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Please fill all fields")),
+      );
+      return;
+    }
+
+    if (selectedBloodGroup == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please select a blood type")),
       );
       return;
     }
@@ -52,6 +61,7 @@ class _VolunteerRegisterScreenState extends State<VolunteerRegisterScreen> {
           'email': email,
           'phone': phone,
           'password': password,
+          'blood_group': selectedBloodGroup,
           'role': 'team_volunteer',
         }),
       );
@@ -168,6 +178,34 @@ class _VolunteerRegisterScreenState extends State<VolunteerRegisterScreen> {
                         buildField(hint: "Phone", icon: Icons.phone, controller: phoneController),
                         const SizedBox(height: 20),
                         buildField(hint: "Password", icon: Icons.lock, controller: passwordController, isPass: true),
+                        const SizedBox(height: 20),
+                        
+                        // Blood Type Dropdown Field
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                          decoration: BoxDecoration(color: const Color(0xFFF1F3F6), borderRadius: BorderRadius.circular(15)),
+                          child: DropdownButtonFormField<String>(
+                            value: selectedBloodGroup,
+                            hint: const Text("Select blood type", style: TextStyle(color: Colors.grey)),
+                            icon: Icon(Icons.arrow_drop_down, color: primaryMaroon),
+                            decoration: InputDecoration(
+                              prefixIcon: Icon(Icons.bloodtype, color: primaryMaroon),
+                              border: InputBorder.none,
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            ),
+                            items: bloodGroups.map((String group) {
+                              return DropdownMenuItem<String>(
+                                value: group,
+                                child: Text(group),
+                              );
+                            }).toList(),
+                            onChanged: (String? value) {
+                              setState(() {
+                                selectedBloodGroup = value;
+                              });
+                            },
+                          ),
+                        ),
 
                         const SizedBox(height: 25),
 

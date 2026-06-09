@@ -240,7 +240,7 @@ class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
                             Navigator.pushReplacementNamed(
                               context,
                               AppRoutes.roleSelection,
-                            ); 
+                            );
                           }
                         },
                       ),
@@ -271,10 +271,7 @@ class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
                     ),
                     child: const Text(
                       "Logging in as Volunteer",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16.5,
-                      ),
+                      style: TextStyle(color: Colors.white, fontSize: 16.5),
                     ),
                   ),
 
@@ -378,7 +375,8 @@ class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
                           child: TextButton(
                             onPressed: () => Navigator.pushNamed(
                               context,
-                              AppRoutes.volunteerSettings, // Assuming dynamic catch destination helper maps here
+                              AppRoutes
+                                  .volunteerSettings, // Assuming dynamic catch destination helper maps here
                             ),
                             child: const Text(
                               "Forgot Password?",
@@ -424,8 +422,10 @@ class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
                   const SizedBox(height: 40),
 
                   GestureDetector(
-                    onTap: () =>
-                        Navigator.pushNamed(context, AppRoutes.helpSupport), // Preservation of navigation line
+                    onTap: () => Navigator.pushNamed(
+                      context,
+                      AppRoutes.helpSupport,
+                    ), // Preservation of navigation line
                     child: const Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [

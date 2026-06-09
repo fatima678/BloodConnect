@@ -2,7 +2,7 @@
 
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // Cache ke liye import kiya
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blood_donation_app/theme.dart';
 import 'package:blood_donation_app/services/auth_token_service.dart';
 
@@ -18,96 +18,137 @@ class PatientNotificationsScreen extends StatefulWidget {
 
 class _PatientNotificationsScreenState
     extends State<PatientNotificationsScreen> {
+  bool isLoading = true;
   String errorMessage = '';
   List<Map<String, dynamic>> notifications = [];
+
+  static const String cacheKey = 'cached_patient_notifications';
 
   @override
   void initState() {
     super.initState();
-    // 1. Instantly local cache se purana data load karo (0 milliseconds lagenge)
+
     loadCachedNotifications().then((_) {
-      // 2. Uske baad background mein silently server se naya data fetch karo
-      fetchNotifications();
+      fetchNotifications(showLoader: notifications.isEmpty);
     });
   }
 
-  // Local device storage se data uthane ka function
+  @override
+  void deactivate() {
+    _removeReadNotificationsFromLocalView();
+    super.deactivate();
+  }
+
   Future<void> loadCachedNotifications() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final String? cachedData = prefs.getString('cached_patient_notifications');
-      
+      final String? cachedData = prefs.getString(cacheKey);
+
       if (cachedData != null) {
         final List decodedList = jsonDecode(cachedData);
+
+        final List<Map<String, dynamic>> cachedNotifications = decodedList
+            .map<Map<String, dynamic>>(
+              (item) => Map<String, dynamic>.from(item),
+            )
+            .where((item) => item['is_read'] != true)
+            .toList();
+
+        if (!mounted) return;
+
         setState(() {
-          notifications = decodedList
-              .map<Map<String, dynamic>>((item) => Map<String, dynamic>.from(item))
-              .toList();
+          notifications = cachedNotifications;
+          isLoading = false;
         });
       }
     } catch (e) {
-      debugPrint('Error loading cached data: $e');
+      debugPrint('Error loading patient cached notifications: $e');
     }
   }
 
-  // Local storage me data save karne ka function
   Future<void> cacheNotifications(List<Map<String, dynamic>> dataList) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('cached_patient_notifications', jsonEncode(dataList));
+
+      final List<Map<String, dynamic>> unreadOnly = dataList
+          .where((item) => item['is_read'] != true)
+          .map<Map<String, dynamic>>(
+            (item) => Map<String, dynamic>.from(item),
+          )
+          .toList();
+
+      await prefs.setString(cacheKey, jsonEncode(unreadOnly));
     } catch (e) {
-      debugPrint('Error caching data: $e');
+      debugPrint('Error caching patient notifications: $e');
     }
   }
 
-  Future<void> fetchNotifications() async {
+  Future<void> fetchNotifications({bool showLoader = true}) async {
+    if (showLoader && notifications.isEmpty) {
+      setState(() {
+        isLoading = true;
+        errorMessage = '';
+      });
+    } else {
+      setState(() {
+        errorMessage = '';
+      });
+    }
+
     try {
       final response = await AuthTokenService.authorizedGet(
         '/notifications?role=patient&limit=50',
       );
 
       debugPrint('Patient Notifications Status: ${response.statusCode}');
+      debugPrint('Patient Notifications Body: ${response.body}');
 
       Map<String, dynamic> body = {};
+
       try {
         body = jsonDecode(response.body);
-      } catch (_) {}
+      } catch (_) {
+        body = {};
+      }
 
       if (!mounted) return;
 
       if (response.statusCode == 200 && body['success'] == true) {
         final List list = body['data'] is List ? body['data'] : [];
-        
+
         final List<Map<String, dynamic>> freshNotifications = list
-            .map<Map<String, dynamic>>((item) => Map<String, dynamic>.from(item))
+            .map<Map<String, dynamic>>(
+              (item) => Map<String, dynamic>.from(item),
+            )
+            .where((item) => item['is_read'] != true)
             .toList();
 
         setState(() {
           notifications = freshNotifications;
           errorMessage = '';
+          isLoading = false;
         });
 
-        // Naye data ko local cache me save karlo taaki agli baar ye instantly dikhe
-        cacheNotifications(freshNotifications);
+        await cacheNotifications(freshNotifications);
       } else {
-        if (notifications.isEmpty) {
-          setState(() {
-            errorMessage = body['message'] ?? 'Failed to fetch notifications.';
-          });
-        }
+        setState(() {
+          errorMessage = body['message'] ?? 'Failed to fetch notifications.';
+          isLoading = false;
+        });
       }
     } catch (e) {
       if (!mounted) return;
-      if (notifications.isEmpty) {
-        setState(() {
-          errorMessage = 'Connection Error: $e';
-        });
-      }
+
+      setState(() {
+        errorMessage = notifications.isEmpty ? 'Connection Error: $e' : '';
+        isLoading = false;
+      });
     }
   }
 
   Future<void> markAsRead(String notificationId) async {
     if (notificationId.isEmpty) return;
+
     try {
       await AuthTokenService.authorizedPut(
         '/notifications/$notificationId/read',
@@ -116,6 +157,45 @@ class _PatientNotificationsScreenState
     } catch (e) {
       debugPrint('Mark patient notification read error: $e');
     }
+  }
+
+  Future<void> markNotificationViewed(
+    Map<String, dynamic> item,
+  ) async {
+    final String notificationId = item['id']?.toString() ?? '';
+
+    setState(() {
+      item['is_read'] = true;
+    });
+
+    await cacheNotifications(notifications);
+
+    if (notificationId.isNotEmpty) {
+      await markAsRead(notificationId);
+    }
+  }
+
+  Future<void> _removeReadNotificationsFromLocalView() async {
+    if (notifications.isEmpty) return;
+
+    final List<Map<String, dynamic>> unreadOnly = notifications
+        .where((item) => item['is_read'] != true)
+        .map<Map<String, dynamic>>(
+          (item) => Map<String, dynamic>.from(item),
+        )
+        .toList();
+
+    if (unreadOnly.length == notifications.length) {
+      return;
+    }
+
+    await cacheNotifications(unreadOnly);
+
+    if (!mounted) return;
+
+    setState(() {
+      notifications = unreadOnly;
+    });
   }
 
   IconData getNotificationIcon(String? type) {
@@ -146,7 +226,9 @@ class _PatientNotificationsScreenState
 
   String formatTime(dynamic value) {
     if (value == null) return '';
+
     final String text = value.toString();
+
     try {
       final DateTime date = DateTime.parse(text).toLocal();
       final DateTime now = DateTime.now();
@@ -179,11 +261,18 @@ class _PatientNotificationsScreenState
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.notifications_none, size: 80, color: Colors.grey),
+          Icon(
+            Icons.notifications_none,
+            size: 80,
+            color: Colors.grey,
+          ),
           SizedBox(height: 12),
           Text(
             'No notifications yet',
-            style: TextStyle(fontSize: 17, color: Colors.black54),
+            style: TextStyle(
+              fontSize: 17,
+              color: Colors.black54,
+            ),
           ),
         ],
       ),
@@ -191,7 +280,6 @@ class _PatientNotificationsScreenState
   }
 
   Widget buildNotificationTile(Map<String, dynamic> item) {
-    final String id = item['id']?.toString() ?? '';
     final String title = item['title']?.toString() ?? 'Notification';
     final String body = item['body']?.toString() ?? '';
     final String? type = item['type']?.toString();
@@ -210,10 +298,16 @@ class _PatientNotificationsScreenState
         ),
       ),
       child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 10,
+        ),
         leading: CircleAvatar(
           backgroundColor: getNotificationColor(type).withOpacity(0.12),
-          child: Icon(getNotificationIcon(type), color: getNotificationColor(type)),
+          child: Icon(
+            getNotificationIcon(type),
+            color: getNotificationColor(type),
+          ),
         ),
         title: Text(
           getFriendlyTitle(type, title),
@@ -224,32 +318,36 @@ class _PatientNotificationsScreenState
         ),
         subtitle: Padding(
           padding: const EdgeInsets.only(top: 4),
-          child: Text(body, style: const TextStyle(color: Colors.black54)),
+          child: Text(
+            body,
+            style: const TextStyle(color: Colors.black54),
+          ),
         ),
         trailing: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
               formatTime(item['created_at']),
-              style: const TextStyle(fontSize: 11, color: Colors.grey),
+              style: const TextStyle(
+                fontSize: 11,
+                color: Colors.grey,
+              ),
             ),
             if (!isRead) ...[
               const SizedBox(height: 6),
               Container(
                 width: 8,
                 height: 8,
-                decoration: const BoxDecoration(color: primaryMaroon, shape: BoxShape.circle),
+                decoration: const BoxDecoration(
+                  color: primaryMaroon,
+                  shape: BoxShape.circle,
+                ),
               ),
             ],
           ],
         ),
         onTap: () {
-          // Optimistic UI Update: Instantly read ho jayega bina response ke wait kiye
-          setState(() {
-            item['is_read'] = true;
-          });
-          markAsRead(id);
-          cacheNotifications(notifications); // Updates local storage read status state
+          markNotificationViewed(item);
         },
       ),
     );
@@ -265,40 +363,52 @@ class _PatientNotificationsScreenState
         foregroundColor: Colors.white,
         actions: [
           IconButton(
-            onPressed: fetchNotifications,
+            onPressed: () async {
+              await _removeReadNotificationsFromLocalView();
+              await fetchNotifications(showLoader: false);
+            },
             icon: const Icon(Icons.refresh),
           ),
         ],
       ),
-      body: errorMessage.isNotEmpty && notifications.isEmpty
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(errorMessage, textAlign: TextAlign.center, style: const TextStyle(color: Colors.red)),
-                    const SizedBox(height: 14),
-                    ElevatedButton(
-                      onPressed: fetchNotifications,
-                      child: const Text('Retry'),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : errorMessage.isNotEmpty && notifications.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          errorMessage,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.red),
+                        ),
+                        const SizedBox(height: 14),
+                        ElevatedButton(
+                          onPressed: () => fetchNotifications(showLoader: true),
+                          child: const Text('Retry'),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-              ),
-            )
-          : notifications.isEmpty
-              ? const SizedBox.shrink() // Jab tak local memory bilkul khali hai tab tak silent blank tile build hogi
-              : RefreshIndicator(
-                  onRefresh: fetchNotifications,
-                  child: ListView.builder(
-                    padding: const EdgeInsets.all(12),
-                    itemCount: notifications.length,
-                    itemBuilder: (context, index) {
-                      return buildNotificationTile(notifications[index]);
-                    },
                   ),
-                ),
+                )
+              : notifications.isEmpty
+                  ? buildEmptyState()
+                  : RefreshIndicator(
+                      onRefresh: () async {
+                        await _removeReadNotificationsFromLocalView();
+                        await fetchNotifications(showLoader: false);
+                      },
+                      child: ListView.builder(
+                        padding: const EdgeInsets.all(12),
+                        itemCount: notifications.length,
+                        itemBuilder: (context, index) {
+                          return buildNotificationTile(notifications[index]);
+                        },
+                      ),
+                    ),
     );
   }
 }

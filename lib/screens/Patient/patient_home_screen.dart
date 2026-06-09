@@ -7,6 +7,7 @@ import 'package:blood_donation_app/services/auth_token_service.dart';
 
 import 'patient_find_nearby_donors.dart';
 import 'patient_blood_bank_screen.dart';
+import 'patient_blood_bank_map_screen.dart';
 import 'patient_blood_request_screen.dart';
 import 'Patient_Profile_Screen.dart';
 import 'Patient_View_Donate_Screen.dart';
@@ -397,7 +398,7 @@ class _DashboardContentState extends State<DashboardContent> {
                     onTap: () => Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (_) => const PatientBloodBankScreen(),
+                        builder: (_) => const BloodBankScreen(),
                       ),
                     ),
                   ),

@@ -31,13 +31,15 @@ import 'screens/Donor/Donor_Donation_Request_Screen.dart';
 
 // 🤝 VOLUNTEER screens
 import 'screens/Volunteer/Volunteer_Dashboard.dart';
-import 'screens/Volunteer/Blood_Request_Management_Screen.dart';
-import 'screens/Volunteer/Donor_Data_Screen.dart';
+// import 'screens/Volunteer/Blood_Request_Management_Screen.dart';
+import 'screens/Volunteer/volunteer_evet_screen.dart';
 // import 'screens/Volunteer/Certificate_Generation_Screen.dart';
 import 'screens/Volunteer/Volunteer_Profile_Screen.dart';
 import 'screens/Volunteer/Help_Support_Page.dart';
 import 'screens/Volunteer/Volunteer_Register.dart';
 import 'screens/Volunteer/Volunteer_Login_Screen.dart';
+import 'screens/Volunteer/contact_admin.dart';
+import 'screens/Volunteer/Volunteer_Notification_Screen.dart';
 
 class AppRoutes {
   // 🛣️ Universal Route Constants
@@ -45,11 +47,20 @@ class AppRoutes {
   static const String volunteerRegister = '/volunteer_register';
   static const String volunteerDashboard = '/volunteer_dashboard';
   static const String bloodRequestManagement = '/blood-request-management';
+  static const String volunteerEvetScreen = '/volunteer-events';
+  static const String contactAdmin = '/contact-admin';
+
   static const String donorData = '/donor-data';
   // static const String certificateGeneration = '/certificate-generation';
   static const String volunteerProfile = '/volunteer-profile';
   static const String volunteerSettings = '/volunteer-settings';
   static const String helpSupport = '/help-support';
+  static const String volunteerContactAdmin = '/volunteer-contact-admin';
+  static const String volunteerNotifications = '/volunteer-notifications';
+  static const String volunteerEvents = '/volunteer-events';
+  static const String volunteerBloodRequestManagement = '/blood-request-management';
+  static const String volunteerCertificateGeneration = '/certificate-generation';
+  
 
   // 🏥 Patient Specific Named Routes
   static const String patientLogin = '/patient-login';
@@ -76,6 +87,12 @@ class AppRoutes {
   static const String donorNotifications = '/donor-notifications';
   static const String donorDonationRequests = '/donor-donation-requests';
   static const String volunteerLogin = '/volunteer-login';
+  // static const String volunteerContactAdmin = '/volunteer-contact-admin'; 
+
+  
+
+
+
 
   // 🗺️ ROUTE SWITCH ENGINE
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -190,13 +207,13 @@ class AppRoutes {
           builder: (_) => const VolunteerRegisterScreen(),
         );
 
-      case bloodRequestManagement:
-        return MaterialPageRoute(
-          builder: (_) => const BloodRequestManagementScreen(),
-        );
+      // case bloodRequestManagement:
+      //   return MaterialPageRoute(
+      //     builder: (_) => const BloodRequestManagementScreen(),
+      //   );
 
       case donorData:
-        return MaterialPageRoute(builder: (_) => const DonorDataScreen());
+        return MaterialPageRoute(builder: (_) => const ContactAdmin());
 
       // case certificateGeneration:
       //   return MaterialPageRoute(
@@ -206,6 +223,21 @@ class AppRoutes {
       case volunteerProfile:
         return MaterialPageRoute(
           builder: (_) => const VolunteerProfileScreen(),
+        );
+
+      case volunteerNotifications:
+        return MaterialPageRoute(
+          builder: (_) => const VolunteerNotificationScreen(),
+        );
+
+      case volunteerEvents:
+        return MaterialPageRoute(
+          builder: (_) => const VolunteerEvetScreen(),
+        );
+
+      case contactAdmin:
+        return MaterialPageRoute(
+          builder: (_) => const ContactAdmin(),
         );
 
       case volunteerSettings:

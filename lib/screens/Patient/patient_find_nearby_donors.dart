@@ -3,22 +3,21 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:blood_donation_app/theme.dart';
 import 'package:blood_donation_app/services/auth_token_service.dart';
 
-enum DonorFilterType {
-  nearby,
-  inCity,
-  all,
-}
-
 class FindNearbyDonorsScreen extends StatefulWidget {
   static const String routeName = '/find-nearby-donors';
 
-  const FindNearbyDonorsScreen({super.key});
+  final String? bloodRequestId;
+
+  const FindNearbyDonorsScreen({
+    super.key,
+    this.bloodRequestId,
+  });
 
   @override
   State<FindNearbyDonorsScreen> createState() => _FindNearbyDonorsScreenState();
@@ -26,22 +25,26 @@ class FindNearbyDonorsScreen extends StatefulWidget {
 
 class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     with SingleTickerProviderStateMixin {
-  bool _isLoading = false;
+  static const String _latestActiveBloodRequestIdKey =
+      'latest_active_blood_request_id';
+
+  bool _isLoading = true;
   bool _isHistoryLoading = false;
-  bool _isSendingRequest = false;
   bool _hasLoadedOnce = false;
   bool _showSuccessCard = false;
+  bool _isInitialLoading = true;
+  bool _isFetchingDonors = false;
+  bool _needsBloodRequestForm = false;
 
-  double? _latitude;
-  double? _longitude;
+  final Set<String> _sendingDonorRequestIds = <String>{};
+
   double _radius = 5.0;
 
+  String? _bloodRequestId;
   String? _patientBloodGroup;
   String? _patientCity;
-
-  final String googleMapsApiKey = "AIzaSyCIm0pDpMsEePYylMAZBuZfj8q3cUn3eHc";
-
-  DonorFilterType _selectedFilter = DonorFilterType.nearby;
+  String? _patientLocation;
+  String? _hospitalName;
 
   late final AnimationController _successAnimationController;
   late final Animation<double> _successScaleAnimation;
@@ -71,16 +74,14 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     }
 
     donors = donors.where((donor) {
-      final String donorRequestId = donor["id"]?.toString() ?? '';
+      final String donorRequestId = _getDonorRequestId(donor);
       return _historyForDonor(donorRequestId) == null;
     }).toList();
 
-    if (_selectedFilter == DonorFilterType.inCity) {
-      donors = donors.where((donor) {
-        final donorCity = _getDonorCity(donor);
-        return _sameCity(donorCity, _patientCity);
-      }).toList();
-    }
+    donors = donors.where((donor) {
+      final double? distanceKm = _readDistanceKm(donor);
+      return distanceKm != null && distanceKm <= _radius;
+    }).toList();
 
     return donors;
   }
@@ -112,16 +113,104 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     if (_hasLoadedOnce) return;
     _hasLoadedOnce = true;
 
+    _resolveBloodRequestId();
     _loadInitialData();
   }
 
-  Future<void> _loadInitialData() async {
-    await _fetchPatientProfile();
+  void _resolveBloodRequestId() {
+    _bloodRequestId = widget.bloodRequestId;
 
-    await Future.wait([
-      _getCurrentLocationAndFetchDonors(),
-      _fetchRequestHistory(),
-    ]);
+    final Object? args = ModalRoute.of(context)?.settings.arguments;
+
+    if (args is String && args.trim().isNotEmpty) {
+      _bloodRequestId = args.trim();
+      return;
+    }
+
+    if (args is Map) {
+      final dynamic value = args['blood_request_id'] ??
+          args['bloodRequestId'] ??
+          args['request_id'] ??
+          args['requestId'] ??
+          args['id'];
+
+      if (value != null && value.toString().trim().isNotEmpty) {
+        _bloodRequestId = value.toString().trim();
+      }
+    }
+  }
+
+  Future<void> _loadInitialData() async {
+    if (mounted) {
+      setState(() {
+        _isInitialLoading = true;
+        _isLoading = true;
+        _needsBloodRequestForm = false;
+      });
+    }
+
+    try {
+      await _loadSavedBloodRequestIdIfNeeded();
+
+      if (_bloodRequestId == null || _bloodRequestId!.trim().isEmpty) {
+        if (mounted) {
+          setState(() {
+            _needsBloodRequestForm = true;
+            nearbyDonors = [];
+          });
+        }
+        return;
+      }
+
+      await _saveLatestActiveBloodRequestId(_bloodRequestId!.trim());
+      await _fetchRequestHistory(showLoader: false);
+      await _fetchNearbyDonors(showLoader: false);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isInitialLoading = false;
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadSavedBloodRequestIdIfNeeded() async {
+    if (_bloodRequestId != null && _bloodRequestId!.trim().isNotEmpty) {
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final savedId = prefs.getString(_latestActiveBloodRequestIdKey);
+
+    if (savedId != null && savedId.trim().isNotEmpty) {
+      _bloodRequestId = savedId.trim();
+    }
+  }
+
+  Future<void> _saveLatestActiveBloodRequestId(String bloodRequestId) async {
+    if (bloodRequestId.trim().isEmpty) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _latestActiveBloodRequestIdKey,
+      bloodRequestId.trim(),
+    );
+  }
+
+  Future<void> _clearLatestActiveBloodRequestId() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_latestActiveBloodRequestIdKey);
+  }
+
+  String _getDonorRequestId(Map<String, dynamic> donor) {
+    final dynamic value = donor['donor_request_id'] ??
+        donor['donorRequestId'] ??
+        donor['request_id'] ??
+        donor['requestId'] ??
+        donor['id'];
+
+    return value?.toString().trim() ?? '';
   }
 
   String? _readString(Map<String, dynamic> data, List<String> keys) {
@@ -142,6 +231,15 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     return null;
   }
 
+  double? _readDistanceKm(Map<String, dynamic> donor) {
+    final value =
+        donor["distance_km"] ?? donor["distanceKm"] ?? donor["distance"];
+
+    if (value == null) return null;
+
+    return double.tryParse(value.toString());
+  }
+
   String _normalizeBloodGroup(dynamic value) {
     return value
             ?.toString()
@@ -151,90 +249,6 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
             .replaceAll("POSITIVE", "+")
             .replaceAll("NEGATIVE", "-") ??
         "";
-  }
-
-  String _normalizeCity(dynamic value) {
-    return value
-            ?.toString()
-            .trim()
-            .toLowerCase()
-            .replaceAll("city", "")
-            .replaceAll("district", "")
-            .replaceAll(RegExp(r'\s+'), " ")
-            .trim() ??
-        "";
-  }
-
-  bool _sameCity(String? first, String? second) {
-    final cityOne = _normalizeCity(first);
-    final cityTwo = _normalizeCity(second);
-
-    if (cityOne.isEmpty || cityTwo.isEmpty) return false;
-
-    return cityOne == cityTwo ||
-        cityOne.contains(cityTwo) ||
-        cityTwo.contains(cityOne);
-  }
-
-  String? _extractCityFromAddressComponents(List components) {
-    String? locality;
-    String? adminLevel2;
-    String? adminLevel1;
-
-    for (final component in components) {
-      final List types = component["types"] ?? [];
-      final String name = component["long_name"]?.toString().trim() ?? "";
-
-      if (name.isEmpty) continue;
-
-      if (types.contains("locality")) {
-        locality = name;
-      }
-
-      if (types.contains("administrative_area_level_2")) {
-        adminLevel2 = name;
-      }
-
-      if (types.contains("administrative_area_level_1")) {
-        adminLevel1 = name;
-      }
-    }
-
-    return locality ?? adminLevel2 ?? adminLevel1;
-  }
-
-  Future<String?> _getCityFromCoordinates(
-    double latitude,
-    double longitude,
-  ) async {
-    try {
-      final Uri url = Uri.parse(
-        "https://maps.googleapis.com/maps/api/geocode/json"
-        "?latlng=$latitude,$longitude"
-        "&key=$googleMapsApiKey",
-      );
-
-      final http.Response response = await http
-          .get(url)
-          .timeout(const Duration(seconds: 12));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-
-        if (data["status"] == "OK" &&
-            data["results"] != null &&
-            data["results"].isNotEmpty) {
-          final result = data["results"][0];
-          final List addressComponents = result["address_components"] ?? [];
-
-          return _extractCityFromAddressComponents(addressComponents);
-        }
-      }
-
-      return null;
-    } catch (_) {
-      return null;
-    }
   }
 
   String? _extractCityFromLocation(String? location) {
@@ -269,62 +283,8 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     return coordinatePattern.hasMatch(text) || numberOnlyPattern.hasMatch(text);
   }
 
-  String? _getDonorCity(Map<String, dynamic> donor) {
-    final city = _readString(
-      donor,
-      [
-        "city",
-        "donor_city",
-        "donorCity",
-        "current_city",
-        "currentCity",
-        "location_city",
-        "locationCity",
-        "district",
-      ],
-    );
-
-    if (city != null) return city;
-
-    final location = _readString(
-      donor,
-      [
-        "current_location",
-        "currentLocation",
-        "location_name",
-        "locationName",
-        "address",
-        "location",
-      ],
-    );
-
-    return _extractCityFromLocation(location);
-  }
-
-  String _getReadableLocation(Map<String, dynamic> donor) {
-    final location = _readString(
-      donor,
-      [
-        "current_location",
-        "currentLocation",
-        "location_name",
-        "locationName",
-        "address",
-        "location",
-      ],
-    );
-
-    if (location != null && !_looksLikeCoordinates(location)) {
-      return location;
-    }
-
-    final city = _getDonorCity(donor);
-
-    if (city != null && city.trim().isNotEmpty) {
-      return city;
-    }
-
-    return "Exact location not available";
+  String _serverRadiusValue() {
+    return _radius.round().toString();
   }
 
   Map<String, dynamic>? _historyForDonor(String donorRequestId) {
@@ -341,190 +301,115 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     return null;
   }
 
-  Future<void> _fetchPatientProfile() async {
+  void _setBloodRequestMeta(Map<String, dynamic> responseBody) {
+    final dynamic data = responseBody["data"];
+
+    Map<String, dynamic> bloodRequest = {};
+
+    if (data is Map && data["blood_request"] is Map) {
+      bloodRequest = Map<String, dynamic>.from(data["blood_request"]);
+    }
+
+    final String? bloodGroup = _readString(
+          bloodRequest,
+          [
+            "blood_group",
+            "bloodGroup",
+            "patient_blood_group",
+            "patientBloodGroup",
+          ],
+        ) ??
+        _readString(
+          responseBody,
+          [
+            "blood_group",
+            "bloodGroup",
+          ],
+        );
+
+    final String? city = _readString(
+          bloodRequest,
+          [
+            "city",
+            "current_city",
+            "currentCity",
+            "patient_city",
+            "patientCity",
+          ],
+        ) ??
+        _readString(
+          responseBody,
+          [
+            "patient_city",
+            "patientCity",
+            "city",
+          ],
+        );
+
+    final String? location = _readString(
+          bloodRequest,
+          [
+            "location",
+            "current_location",
+            "currentLocation",
+            "address",
+          ],
+        ) ??
+        _readString(
+          responseBody,
+          [
+            "patient_location",
+            "patientLocation",
+            "location",
+          ],
+        );
+
+    final String? hospital = _readString(
+      bloodRequest,
+      [
+        "hospital_name",
+        "hospitalName",
+        "hospital",
+      ],
+    );
+
+    setState(() {
+      _patientBloodGroup = bloodGroup ?? _patientBloodGroup;
+      _patientCity = city ?? _extractCityFromLocation(location) ?? _patientCity;
+      _patientLocation = location ?? _patientLocation;
+      _hospitalName = hospital ?? _hospitalName;
+    });
+  }
+
+  Future<void> _fetchNearbyDonors({
+    bool showLoader = true,
+  }) async {
+    if (mounted) {
+      setState(() {
+        _isFetchingDonors = true;
+
+        if (showLoader) {
+          _isLoading = nearbyDonors.isEmpty;
+        }
+      });
+    }
+
     try {
-      final response = await AuthTokenService.authorizedGet('/profile');
-
-      debugPrint("Patient Profile Status: ${response.statusCode}");
-      debugPrint("Patient Profile Body: ${response.body}");
-
-      Map<String, dynamic> responseBody = {};
-
-      try {
-        responseBody = jsonDecode(response.body);
-      } catch (_) {
-        responseBody = {};
-      }
-
-      if (!mounted) return;
-
-      if (response.statusCode == 200) {
-        final dynamic data = responseBody["data"] ??
-            responseBody["user"] ??
-            responseBody["profile"] ??
-            responseBody;
-
-        if (data is Map) {
-          final profile = Map<String, dynamic>.from(data);
-
-          final bloodGroup = _readString(
-            profile,
-            [
-              "blood_group",
-              "bloodGroup",
-              "patient_blood_group",
-              "patientBloodGroup",
-            ],
-          );
-
-          final city = _readString(
-            profile,
-            [
-              "city",
-              "current_city",
-              "currentCity",
-              "location_city",
-              "locationCity",
-            ],
-          );
-
-          final location = _readString(
-            profile,
-            [
-              "location",
-              "address",
-              "current_location",
-              "currentLocation",
-            ],
-          );
-
+      if (_bloodRequestId == null || _bloodRequestId!.trim().isEmpty) {
+        if (mounted) {
           setState(() {
-            _patientBloodGroup = bloodGroup;
-            _patientCity = city ?? _extractCityFromLocation(location);
+            _needsBloodRequestForm = true;
+            nearbyDonors = [];
           });
         }
-      }
-    } catch (e) {
-      debugPrint("Patient profile fetch error: $e");
-    }
-  }
-
-  String _selectedFilterApiValue() {
-    switch (_selectedFilter) {
-      case DonorFilterType.nearby:
-        return "nearby";
-      case DonorFilterType.inCity:
-        return "in_city";
-      case DonorFilterType.all:
-        return "all";
-    }
-  }
-
-  String _serverRadiusValue() {
-    return _radius.round().toString();
-  }
-
-  Future<void> _getCurrentLocationAndFetchDonors() async {
-    setState(() => _isLoading = true);
-
-    try {
-      final bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-
-      if (!serviceEnabled) {
-        if (!mounted) return;
-
-        setState(() => _isLoading = false);
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Please enable location services.")),
-        );
         return;
       }
 
-      LocationPermission permission = await Geolocator.checkPermission();
-
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        if (!mounted) return;
-
-        setState(() => _isLoading = false);
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Location permission is required.")),
-        );
-        return;
-      }
-
-      final Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
-
-      _latitude = position.latitude;
-      _longitude = position.longitude;
-
-      final String? detectedCity = await _getCityFromCoordinates(
-        position.latitude,
-        position.longitude,
-      );
-
-      if (!mounted) return;
-
-      setState(() {
-        _patientCity = detectedCity ?? _patientCity;
-      });
-
-      await _fetchNearbyDonors();
-    } catch (e) {
-      if (!mounted) return;
-
-      setState(() => _isLoading = false);
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Failed to get location: $e")),
-      );
-    }
-  }
-
-  Future<void> _fetchNearbyDonors() async {
-    if (_latitude == null || _longitude == null) {
-      await _getCurrentLocationAndFetchDonors();
-      return;
-    }
-
-    if (_patientCity == null || _patientCity!.trim().isEmpty) {
-      setState(() => _isLoading = false);
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            "City could not be detected from your current location.",
-          ),
-        ),
-      );
-      return;
-    }
-
-    setState(() => _isLoading = true);
-
-    try {
       final queryParameters = <String, String>{
-        'lat': _latitude.toString(),
-        'lng': _longitude.toString(),
+        'blood_request_id': _bloodRequestId!.trim(),
         'radius': _serverRadiusValue(),
-        'filter': _selectedFilterApiValue(),
+        'filter': 'nearby',
       };
-
-      if (_patientBloodGroup != null && _patientBloodGroup!.trim().isNotEmpty) {
-        queryParameters['blood_group'] = _patientBloodGroup!.trim();
-      }
-
-      if (_patientCity != null && _patientCity!.trim().isNotEmpty) {
-        queryParameters['city'] = _patientCity!.trim();
-      }
 
       final uri = Uri.parse('${AuthTokenService.baseUrl}/nearby-options')
           .replace(queryParameters: queryParameters);
@@ -566,7 +451,11 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                     ? responseBody["donors"]
                     : [];
 
+        _setBloodRequestMeta(responseBody);
+        await _saveLatestActiveBloodRequestId(_bloodRequestId!.trim());
+
         setState(() {
+          _needsBloodRequestForm = false;
           nearbyDonors = donors
               .map<Map<String, dynamic>>(
                 (item) => Map<String, dynamic>.from(item),
@@ -574,6 +463,26 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
               .toList();
         });
       } else {
+        final String? code = responseBody["code"]?.toString();
+
+        if (response.statusCode == 422 && code == "BLOOD_REQUEST_NOT_ACTIVE") {
+          await _clearLatestActiveBloodRequestId();
+
+          if (!mounted) return;
+
+          setState(() {
+            _bloodRequestId = null;
+            _needsBloodRequestForm = true;
+            nearbyDonors = [];
+            _patientBloodGroup = null;
+            _patientCity = null;
+            _patientLocation = null;
+            _hospitalName = null;
+          });
+
+          return;
+        }
+
         final errorMessage =
             responseBody["message"] ?? "Failed to fetch nearby donors.";
 
@@ -589,13 +498,23 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
       );
     } finally {
       if (mounted) {
-        setState(() => _isLoading = false);
+        setState(() {
+          _isFetchingDonors = false;
+
+          if (showLoader) {
+            _isLoading = false;
+          }
+        });
       }
     }
   }
 
-  Future<void> _fetchRequestHistory() async {
-    setState(() => _isHistoryLoading = true);
+  Future<void> _fetchRequestHistory({
+    bool showLoader = true,
+  }) async {
+    if (showLoader && mounted) {
+      setState(() => _isHistoryLoading = true);
+    }
 
     try {
       final response = await AuthTokenService.authorizedGet(
@@ -642,7 +561,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
         SnackBar(content: Text("History Error: $e")),
       );
     } finally {
-      if (mounted) {
+      if (showLoader && mounted) {
         setState(() => _isHistoryLoading = false);
       }
     }
@@ -681,6 +600,10 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
       return Colors.red;
     }
 
+    if (lowerStatus == "active" || lowerStatus.contains("available")) {
+      return Colors.green;
+    }
+
     return Colors.orange;
   }
 
@@ -695,25 +618,6 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     return status.trim().isEmpty ? "N/A" : status;
   }
 
-  Future<void> _refreshData() async {
-    await _fetchPatientProfile();
-
-    await Future.wait([
-      _fetchNearbyDonors(),
-      _fetchRequestHistory(),
-    ]);
-  }
-
-  Future<void> _changeFilter(DonorFilterType filter) async {
-    if (_selectedFilter == filter) return;
-
-    setState(() {
-      _selectedFilter = filter;
-    });
-
-    await _fetchNearbyDonors();
-  }
-
   Future<void> _showRequestSuccessCard() async {
     if (!mounted) return;
 
@@ -723,7 +627,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
 
     _successAnimationController.forward(from: 0);
 
-    await Future.delayed(const Duration(milliseconds: 1800));
+    await Future.delayed(const Duration(milliseconds: 1600));
 
     if (!mounted) return;
 
@@ -733,25 +637,38 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
   }
 
   Future<void> _sendRequest(Map<String, dynamic> donor) async {
-    if (_isSendingRequest || _showSuccessCard) return;
+    if (_showSuccessCard) return;
 
-    final donorRequestId = donor["id"]?.toString();
+    if (_bloodRequestId == null || _bloodRequestId!.trim().isEmpty) {
+      setState(() {
+        _needsBloodRequestForm = true;
+        nearbyDonors = [];
+      });
+      return;
+    }
 
-    if (donorRequestId == null || donorRequestId.isEmpty) {
+    final String donorRequestId = _getDonorRequestId(donor);
+
+    if (donorRequestId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Donor request ID missing.")),
       );
       return;
     }
 
+    if (_sendingDonorRequestIds.contains(donorRequestId)) {
+      return;
+    }
+
     setState(() {
-      _isSendingRequest = true;
+      _sendingDonorRequestIds.add(donorRequestId);
     });
 
     try {
       final response = await AuthTokenService.authorizedPost(
         '/donation-requests',
         {
+          'blood_request_id': _bloodRequestId!.trim(),
           'donor_request_id': donorRequestId,
           'message': 'Patient needs blood urgently.',
         },
@@ -770,31 +687,45 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
       if (response.statusCode == 201 && responseBody['success'] == true) {
         ScaffoldMessenger.of(context).clearSnackBars();
 
-        setState(() {
-          _isSendingRequest = false;
-        });
-
-        await _fetchRequestHistory();
-
-        if (!mounted) return;
+        final Future<void> historyFuture = _fetchRequestHistory(
+          showLoader: false,
+        );
 
         await _showRequestSuccessCard();
+
+        await historyFuture;
 
         if (!mounted) return;
 
         _showHistorySheet();
       } else {
+        final String message =
+            responseBody['message']?.toString() ?? "Failed to send request.";
+
+        if (response.statusCode == 422 &&
+            message.toLowerCase().contains('not pending')) {
+          await _clearLatestActiveBloodRequestId();
+
+          if (!mounted) return;
+
+          setState(() {
+            _bloodRequestId = null;
+            _needsBloodRequestForm = true;
+            nearbyDonors = [];
+            _patientBloodGroup = null;
+            _patientCity = null;
+            _patientLocation = null;
+            _hospitalName = null;
+          });
+
+          return;
+        }
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              responseBody['message'] ?? "Failed to send request.",
-            ),
+            content: Text(message),
           ),
         );
-
-        setState(() {
-          _isSendingRequest = false;
-        });
       }
     } catch (e) {
       if (!mounted) return;
@@ -802,10 +733,12 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Error: $e")),
       );
-
-      setState(() {
-        _isSendingRequest = false;
-      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _sendingDonorRequestIds.remove(donorRequestId);
+        });
+      }
     }
   }
 
@@ -823,7 +756,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
         return StatefulBuilder(
           builder: (context, setSheetState) {
             Future<void> refreshSheet() async {
-              await _fetchRequestHistory();
+              await _fetchRequestHistory(showLoader: false);
 
               if (context.mounted) {
                 setSheetState(() {});
@@ -904,6 +837,88 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
           },
         );
       },
+    );
+  }
+
+  void _openBloodRequestForm() {
+    Navigator.pushNamed(context, '/blood_request');
+  }
+
+  Widget _buildFillFormCard() {
+    return Center(
+      child: Container(
+        width: double.infinity,
+        constraints: const BoxConstraints(maxWidth: 390),
+        margin: const EdgeInsets.symmetric(horizontal: 20),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: primaryMaroon.withOpacity(0.16)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.08),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircleAvatar(
+              radius: 34,
+              backgroundColor: primaryMaroon.withOpacity(0.10),
+              child: const Icon(
+                Icons.assignment,
+                color: primaryMaroon,
+                size: 34,
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              "Fill the form to find nearby donors",
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              "Submit a blood request first. Donors will be shown according to the location and blood group selected in your form.",
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.black54,
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 18),
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: ElevatedButton(
+                onPressed: _openBloodRequestForm,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: primaryMaroon,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: const Text(
+                  "Fill Blood Request Form",
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1074,42 +1089,6 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     );
   }
 
-  Widget _buildFilterButton({
-    required String title,
-    required DonorFilterType filter,
-  }) {
-    final bool selected = _selectedFilter == filter;
-
-    return Expanded(
-      child: GestureDetector(
-        onTap: _isLoading || _isSendingRequest || _showSuccessCard
-            ? null
-            : () => _changeFilter(filter),
-        child: Container(
-          height: 44,
-          margin: const EdgeInsets.symmetric(horizontal: 4),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: selected ? primaryMaroon : Colors.white,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: selected ? primaryMaroon : Colors.grey.shade400,
-              width: 1.2,
-            ),
-          ),
-          child: Text(
-            title,
-            style: TextStyle(
-              color: selected ? Colors.white : Colors.black87,
-              fontWeight: FontWeight.bold,
-              fontSize: 13,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildInfoRow({
     required IconData icon,
     required String text,
@@ -1146,17 +1125,10 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
   }
 
   Widget _buildDonorCard(Map<String, dynamic> donor) {
-    final String name = _readString(
-          donor,
-          ['name', 'user_name', 'donor_name'],
-        ) ??
-        "N/A";
+    final String name = _readString(donor, ['name', 'user_name']) ?? "N/A";
 
-    final String bloodGroup = _readString(
-          donor,
-          ['blood_group', 'bloodGroup', 'donor_blood_group'],
-        ) ??
-        "N/A";
+    final String bloodGroup =
+        _readString(donor, ['blood_group', 'bloodGroup']) ?? "N/A";
 
     final String? hospitalName = _readString(
       donor,
@@ -1169,13 +1141,30 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
       ],
     );
 
-    final String location = _getReadableLocation(donor);
+    final String location = _readString(
+          donor,
+          [
+            'current_location',
+            'currentLocation',
+            'location_name',
+            'locationName',
+            'address',
+            'location',
+          ],
+        ) ??
+        "N/A";
 
     final String distance = _formatDistance(donor["distance_km"]);
 
     final String lastDonation = _formatLastDonation(
       donor["last_donated_date"],
     );
+
+    final String status = donor["status"]?.toString() ?? "N/A";
+
+    final String donorRequestId = _getDonorRequestId(donor);
+    final bool isThisDonorSending =
+        _sendingDonorRequestIds.contains(donorRequestId);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -1211,13 +1200,6 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                     ),
                   ),
                   _buildInfoRow(
-                    icon: Icons.bloodtype,
-                    text: "Blood Group: $bloodGroup",
-                    color: primaryMaroon,
-                    fontWeight: FontWeight.w600,
-                    maxLines: 1,
-                  ),
-                  _buildInfoRow(
                     icon: Icons.social_distance,
                     text: "$distance away",
                     color: Colors.black87,
@@ -1244,11 +1226,21 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                     color: Colors.black54,
                     maxLines: 2,
                   ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      status,
+                      style: TextStyle(
+                        color: _statusColor(status),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 10),
                   SizedBox(
                     height: 38,
                     child: ElevatedButton(
-                      onPressed: _isSendingRequest || _showSuccessCard
+                      onPressed: isThisDonorSending || _showSuccessCard
                           ? null
                           : () => _sendRequest(donor),
                       style: ElevatedButton.styleFrom(
@@ -1259,9 +1251,9 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                           borderRadius: BorderRadius.circular(10),
                         ),
                       ),
-                      child: const Text(
-                        "Send Request",
-                        style: TextStyle(
+                      child: Text(
+                        isThisDonorSending ? "Sending..." : "Send Request",
+                        style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
                         ),
@@ -1278,31 +1270,23 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
   }
 
   String _headerText() {
-    if (_selectedFilter == DonorFilterType.nearby) {
-      return "${filteredDonors.length} Donors Nearby";
-    }
-
-    if (_selectedFilter == DonorFilterType.inCity) {
-      return "${filteredDonors.length} Donors In City";
-    }
-
-    return "${filteredDonors.length} All Donors";
+    return "${filteredDonors.length} Donors Nearby";
   }
 
   String _emptyText() {
+    if (_isInitialLoading) {
+      return "";
+    }
+
+    if (_bloodRequestId == null || _bloodRequestId!.trim().isEmpty) {
+      return "Fill the form to find nearby donors";
+    }
+
     if (_patientBloodGroup == null || _patientBloodGroup!.trim().isEmpty) {
       return "Patient blood group not found";
     }
 
-    if (_selectedFilter == DonorFilterType.nearby) {
-      return "No nearby donors found";
-    }
-
-    if (_selectedFilter == DonorFilterType.inCity) {
-      return "No donors found in your city";
-    }
-
-    return "No donors found";
+    return "No nearby donors found";
   }
 
   @override
@@ -1317,6 +1301,14 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
         .where((item) => item['status']?.toString().toLowerCase() == 'pending')
         .length;
 
+    final bool shouldShowFullLoader =
+        (_isInitialLoading || _isLoading) && nearbyDonors.isEmpty;
+
+    final List<Map<String, dynamic>> displayDonors = filteredDonors;
+
+    final bool shouldHideEmptyMessage =
+        _isFetchingDonors && displayDonors.isEmpty;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text("Find Nearby Donors"),
@@ -1325,8 +1317,9 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
         elevation: 0,
         actions: [
           TextButton.icon(
-            onPressed:
-                _showSuccessCard || _isSendingRequest ? null : _showHistorySheet,
+            onPressed: _showSuccessCard || _needsBloodRequestForm
+                ? null
+                : _showHistorySheet,
             icon: const Icon(
               Icons.history,
               color: Colors.white,
@@ -1346,31 +1339,60 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
       ),
       body: Stack(
         children: [
-          Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                child: Row(
-                  children: [
-                    _buildFilterButton(
-                      title: "Nearby",
-                      filter: DonorFilterType.nearby,
+          if (_needsBloodRequestForm)
+            _buildFillFormCard()
+          else
+            Column(
+              children: [
+                if (_patientLocation != null || _hospitalName != null)
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: primaryMaroon.withOpacity(0.06),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: primaryMaroon.withOpacity(0.15),
+                      ),
                     ),
-                    _buildFilterButton(
-                      title: "In City",
-                      filter: DonorFilterType.inCity,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (_hospitalName != null)
+                          Text(
+                            "Hospital: $_hospitalName",
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                          ),
+                        if (_patientLocation != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            "Patient Location: $_patientLocation",
+                            style: const TextStyle(
+                              color: Colors.black54,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                        if (_patientBloodGroup != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            "Blood Group: $_patientBloodGroup",
+                            style: const TextStyle(
+                              color: primaryMaroon,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
-                    _buildFilterButton(
-                      title: "All",
-                      filter: DonorFilterType.all,
-                    ),
-                  ],
-                ),
-              ),
-
-              if (_selectedFilter == DonorFilterType.nearby)
+                  ),
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
                   child: Column(
                     children: [
                       Row(
@@ -1390,82 +1412,71 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                         divisions: 19,
                         label: "${_radius.round()} km",
                         activeColor: primaryMaroon,
-                        onChanged:
-                            _isSendingRequest || _showSuccessCard
-                                ? null
-                                : (value) {
-                                    setState(() {
-                                      _radius = value;
-                                    });
-                                  },
-                        onChangeEnd:
-                            _isSendingRequest || _showSuccessCard
-                                ? null
-                                : (value) async {
-                                    await _fetchNearbyDonors();
-                                  },
+                        onChanged: _showSuccessCard
+                            ? null
+                            : (value) {
+                                setState(() {
+                                  _radius = value;
+                                });
+                              },
+                        onChangeEnd: _showSuccessCard
+                            ? null
+                            : (value) async {
+                                await _fetchNearbyDonors(showLoader: false);
+                              },
                       ),
                     ],
                   ),
                 ),
-
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
                       _headerText(),
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
-                    TextButton.icon(
-                      onPressed: _isLoading || _isSendingRequest || _showSuccessCard
-                          ? null
-                          : _refreshData,
-                      icon: const Icon(Icons.refresh, size: 20),
-                      label: const Text("Refresh"),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-
-              const SizedBox(height: 8),
-
-              Expanded(
-                child: _isLoading
-                    ? const Center(
-                        child: CircularProgressIndicator(),
-                      )
-                    : filteredDonors.isEmpty
-                        ? Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(
-                                  Icons.person_search,
-                                  size: 80,
-                                  color: Colors.grey,
+                const SizedBox(height: 8),
+                Expanded(
+                  child: shouldShowFullLoader
+                      ? const Center(
+                          child: CircularProgressIndicator(),
+                        )
+                      : shouldHideEmptyMessage
+                          ? const SizedBox.shrink()
+                          : displayDonors.isEmpty
+                              ? Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      const Icon(
+                                        Icons.person_search,
+                                        size: 80,
+                                        color: Colors.grey,
+                                      ),
+                                      const SizedBox(height: 16),
+                                      Text(
+                                        _emptyText(),
+                                        style: const TextStyle(fontSize: 18),
+                                      ),
+                                    ],
+                                  ),
+                                )
+                              : ListView.builder(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                  ),
+                                  itemCount: displayDonors.length,
+                                  itemBuilder: (context, index) {
+                                    final donor = displayDonors[index];
+                                    return _buildDonorCard(donor);
+                                  },
                                 ),
-                                const SizedBox(height: 16),
-                                Text(
-                                  _emptyText(),
-                                  style: const TextStyle(fontSize: 18),
-                                ),
-                              ],
-                            ),
-                          )
-                        : ListView.builder(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            itemCount: filteredDonors.length,
-                            itemBuilder: (context, index) {
-                              final donor = filteredDonors[index];
-                              return _buildDonorCard(donor);
-                            },
-                          ),
-              ),
-            ],
-          ),
-
+                ),
+              ],
+            ),
           if (_showSuccessCard)
             Positioned.fill(
               child: Container(

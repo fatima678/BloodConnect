@@ -18,7 +18,8 @@ class BloodDonateScreen extends StatefulWidget {
   State<BloodDonateScreen> createState() => _BloodDonateScreenState();
 }
 
-class _BloodDonateScreenState extends State<BloodDonateScreen> {
+class _BloodDonateScreenState extends State<BloodDonateScreen>
+    with SingleTickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
 
   final TextEditingController _nameController = TextEditingController();
@@ -28,12 +29,10 @@ class _BloodDonateScreenState extends State<BloodDonateScreen> {
   final TextEditingController _guardianPhoneController =
       TextEditingController();
   final TextEditingController _locationController = TextEditingController();
-  final TextEditingController _messageController = TextEditingController();
 
   String? _selectedBloodGroup;
   String? _selectedCity;
   DateTime? _lastDonatedDate;
-  bool _isAvailableNow = true;
 
   double? _latitude;
   double? _longitude;
@@ -41,6 +40,11 @@ class _BloodDonateScreenState extends State<BloodDonateScreen> {
   bool _isGettingLocation = false;
   bool _isSubmitting = false;
   bool _isSearchingLocation = false;
+  bool _showSuccessCard = false;
+
+  late final AnimationController _successAnimationController;
+  late final Animation<double> _successScaleAnimation;
+  late final Animation<double> _successFadeAnimation;
 
   List<Map<String, dynamic>> _placeSuggestions = [];
 
@@ -57,13 +61,86 @@ class _BloodDonateScreenState extends State<BloodDonateScreen> {
     'O-',
   ];
 
+  @override
+  void initState() {
+    super.initState();
+
+    _successAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+
+    _successScaleAnimation = CurvedAnimation(
+      parent: _successAnimationController,
+      curve: Curves.elasticOut,
+    );
+
+    _successFadeAnimation = CurvedAnimation(
+      parent: _successAnimationController,
+      curve: Curves.easeIn,
+    );
+  }
+
+  DateTime _dateOnly(DateTime date) {
+    return DateTime(date.year, date.month, date.day);
+  }
+
+  DateTime _minimumAllowedDonationDate() {
+    return _dateOnly(DateTime.now().subtract(const Duration(days: 90)));
+  }
+
+  bool _hasDonatedWithinLastThreeMonths() {
+    if (_lastDonatedDate == null) {
+      return false;
+    }
+
+    final DateTime lastDonation = _dateOnly(_lastDonatedDate!);
+    final DateTime minimumAllowedDate = _minimumAllowedDonationDate();
+
+    return lastDonation.isAfter(minimumAllowedDate);
+  }
+
+  int _remainingDaysUntilEligible() {
+    if (_lastDonatedDate == null) {
+      return 0;
+    }
+
+    final DateTime today = _dateOnly(DateTime.now());
+    final DateTime eligibleDate =
+        _dateOnly(_lastDonatedDate!.add(const Duration(days: 90)));
+
+    final int remainingDays = eligibleDate.difference(today).inDays;
+
+    return remainingDays < 0 ? 0 : remainingDays;
+  }
+
+  String _formatDisplayDate(DateTime date) {
+    final String day = date.day.toString().padLeft(2, '0');
+    final String month = date.month.toString().padLeft(2, '0');
+    final String year = date.year.toString();
+
+    return "$day/$month/$year";
+  }
+
   Future<void> _selectLastDonatedDate() async {
+    final DateTime today = DateTime.now();
+    final DateTime minimumAllowedDate = _minimumAllowedDonationDate();
+
+    final DateTime initialDate =
+        _lastDonatedDate != null &&
+                !_dateOnly(_lastDonatedDate!).isAfter(minimumAllowedDate)
+            ? _lastDonatedDate!
+            : minimumAllowedDate;
+
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate:
-          _lastDonatedDate ?? DateTime.now().subtract(const Duration(days: 90)),
+      initialDate: initialDate,
       firstDate: DateTime(2020),
-      lastDate: DateTime.now(),
+      lastDate: today,
+      helpText: "Select last donation date",
+      selectableDayPredicate: (DateTime date) {
+        return !_dateOnly(date).isAfter(minimumAllowedDate);
+      },
     );
 
     if (picked != null) {
@@ -226,9 +303,9 @@ class _BloodDonateScreenState extends State<BloodDonateScreen> {
     } catch (e) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Failed to select location: $e")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Failed to select location: $e")),
+      );
     } finally {
       if (mounted) {
         setState(() => _isGettingLocation = false);
@@ -295,9 +372,9 @@ class _BloodDonateScreenState extends State<BloodDonateScreen> {
     } catch (e) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Failed to get location: $e")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Failed to get location: $e")),
+      );
     } finally {
       if (mounted) {
         setState(() => _isGettingLocation = false);
@@ -348,7 +425,55 @@ class _BloodDonateScreenState extends State<BloodDonateScreen> {
     }
   }
 
+  void _clearFormFields() {
+    _formKey.currentState?.reset();
+
+    _nameController.clear();
+    _cnicController.clear();
+    _phoneController.clear();
+    _guardianNameController.clear();
+    _guardianPhoneController.clear();
+    _locationController.clear();
+
+    setState(() {
+      _selectedBloodGroup = null;
+      _selectedCity = null;
+      _lastDonatedDate = null;
+      _latitude = null;
+      _longitude = null;
+      _placeSuggestions = [];
+    });
+  }
+
+  Future<void> _showSuccessAndRedirect() async {
+    if (!mounted) return;
+
+    setState(() {
+      _showSuccessCard = true;
+    });
+
+    _successAnimationController.forward(from: 0);
+
+    await Future.delayed(const Duration(milliseconds: 1600));
+
+    if (!mounted) return;
+
+    setState(() {
+      _showSuccessCard = false;
+    });
+
+   Navigator.pushReplacementNamed(
+      context,
+      '/donor-home',
+      // arguments: {
+      //   'blood_request_id': bloodRequestId,
+      // },
+    );
+  }
+
   Future<void> _submitDonateBloodRequest() async {
+    if (_isSubmitting || _showSuccessCard) return;
+
     if (!_formKey.currentState!.validate()) return;
 
     if (_selectedBloodGroup == null) {
@@ -380,6 +505,24 @@ class _BloodDonateScreenState extends State<BloodDonateScreen> {
       return;
     }
 
+    if (_hasDonatedWithinLastThreeMonths()) {
+      final int remainingDays = _remainingDaysUntilEligible();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            remainingDays > 0
+                ? "You cannot donate right now. Please wait $remainingDays more days after your last donation."
+                : "You can donate only after 3 months from your last donation.",
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    FocusScope.of(context).unfocus();
+
     setState(() => _isSubmitting = true);
 
     try {
@@ -396,10 +539,10 @@ class _BloodDonateScreenState extends State<BloodDonateScreen> {
         "city": _selectedCity,
         "latitude": _latitude,
         "longitude": _longitude,
-        "is_available_now": _isAvailableNow,
-        "message": _messageController.text.trim().isEmpty
-            ? null
-            : _messageController.text.trim(),
+
+        // UI se remove hai, backend validation ke liye fixed values send kar rahe hain.
+        "is_available_now": true,
+        "message": null,
       });
 
       if (!mounted) return;
@@ -413,51 +556,98 @@ class _BloodDonateScreenState extends State<BloodDonateScreen> {
       }
 
       if (response.statusCode == 201 && responseBody["success"] == true) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Donation request submitted successfully!"),
-            backgroundColor: Colors.green,
-          ),
-        );
+        ScaffoldMessenger.of(context).clearSnackBars();
 
-        _formKey.currentState!.reset();
+        setState(() => _isSubmitting = false);
 
-        setState(() {
-          _selectedBloodGroup = null;
-          _selectedCity = null;
-          _lastDonatedDate = null;
-          _isAvailableNow = true;
-          _latitude = null;
-          _longitude = null;
-          _placeSuggestions = [];
-        });
+        _clearFormFields();
 
-        _nameController.clear();
-        _cnicController.clear();
-        _phoneController.clear();
-        _guardianNameController.clear();
-        _guardianPhoneController.clear();
-        _locationController.clear();
-        _messageController.clear();
+        await _showSuccessAndRedirect();
       } else {
         final String errorMessage =
             responseBody["message"] ?? "Failed to submit donate blood request.";
 
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(errorMessage)));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errorMessage)),
+        );
+
+        setState(() => _isSubmitting = false);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("Error: $e")));
-      }
-    } finally {
-      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $e")),
+        );
+
         setState(() => _isSubmitting = false);
       }
     }
+  }
+
+  Widget _buildSuccessCard() {
+    return FadeTransition(
+      opacity: _successFadeAnimation,
+      child: ScaleTransition(
+        scale: _successScaleAnimation,
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            width: double.infinity,
+            constraints: const BoxConstraints(maxWidth: 380),
+            margin: const EdgeInsets.symmetric(horizontal: 20),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE9F8EF),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: Colors.green.withOpacity(0.35),
+                width: 1.2,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.12),
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: const Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircleAvatar(
+                  radius: 30,
+                  backgroundColor: Colors.green,
+                  child: Icon(
+                    Icons.check,
+                    color: Colors.white,
+                    size: 36,
+                  ),
+                ),
+                SizedBox(height: 14),
+                Text(
+                  "Donation form submitted successfully.",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.green,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                // SizedBox(height: 6),
+                // Text(
+                //   "Redirecting to home...",
+                //   textAlign: TextAlign.center,
+                //   style: TextStyle(
+                //     color: Colors.black54,
+                //     fontSize: 13,
+                //   ),
+                // ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildLocationSuggestions() {
@@ -488,243 +678,298 @@ class _BloodDonateScreenState extends State<BloodDonateScreen> {
               place["description"] ?? "",
               style: const TextStyle(fontSize: 13),
             ),
-            onTap: () => _selectPlaceSuggestion(place),
+            onTap: _isSubmitting || _showSuccessCard
+                ? null
+                : () => _selectPlaceSuggestion(place),
           );
         },
       ),
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Donate Blood"),
-        backgroundColor: primaryMaroon,
-        foregroundColor: Colors.white,
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Center(
-                child: Icon(
-                  Icons.bloodtype,
-                  size: 100,
-                  color: Color(0xFF6B0000),
-                ),
-              ),
-
-              TextFormField(
-                controller: _nameController,
-                decoration: const InputDecoration(
-                  labelText: "Your Name",
-                  prefixIcon: Icon(Icons.person),
-                  border: OutlineInputBorder(),
-                ),
-                validator: (value) =>
-                    value!.isEmpty ? "Name is required" : null,
-              ),
-              const SizedBox(height: 16),
-
-              TextFormField(
-                controller: _cnicController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: "CNIC Number",
-                  hintText: "12345-1234567-1",
-                  prefixIcon: Icon(Icons.credit_card),
-                  border: OutlineInputBorder(),
-                ),
-                validator: (value) =>
-                    value!.isEmpty ? "CNIC is required" : null,
-              ),
-              const SizedBox(height: 16),
-
-              TextFormField(
-                controller: _phoneController,
-                keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(
-                  labelText: "Phone Number",
-                  prefixIcon: Icon(Icons.phone),
-                  border: OutlineInputBorder(),
-                ),
-                validator: (value) =>
-                    value!.isEmpty ? "Phone number is required" : null,
-              ),
-              const SizedBox(height: 16),
-
-              TextFormField(
-                controller: _guardianNameController,
-                decoration: const InputDecoration(
-                  labelText: "Guardian Name",
-                  prefixIcon: Icon(Icons.person_outline),
-                  border: OutlineInputBorder(),
-                ),
-                validator: (value) =>
-                    value!.isEmpty ? "Guardian name is required" : null,
-              ),
-              const SizedBox(height: 16),
-
-              TextFormField(
-                controller: _guardianPhoneController,
-                keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(
-                  labelText: "Guardian Phone Number",
-                  prefixIcon: Icon(Icons.phone_outlined),
-                  border: OutlineInputBorder(),
-                ),
-                validator: (value) =>
-                    value!.isEmpty ? "Guardian phone is required" : null,
-              ),
-              const SizedBox(height: 16),
-
-              DropdownButtonFormField<String>(
-                value: _selectedBloodGroup,
-                decoration: const InputDecoration(
-                  labelText: "Blood Group",
-                  prefixIcon: Icon(Icons.bloodtype),
-                  border: OutlineInputBorder(),
-                ),
-                items: bloodGroups
-                    .map(
-                      (group) =>
-                          DropdownMenuItem(value: group, child: Text(group)),
-                    )
-                    .toList(),
-                onChanged: (value) =>
-                    setState(() => _selectedBloodGroup = value),
-                validator: (value) =>
-                    value == null ? "Please select blood group" : null,
-              ),
-              const SizedBox(height: 16),
-
-              InkWell(
-                onTap: _selectLastDonatedDate,
-                child: InputDecorator(
-                  decoration: const InputDecoration(
-                    labelText: "Last Donated Date",
-                    prefixIcon: Icon(Icons.calendar_today),
-                    border: OutlineInputBorder(),
-                  ),
-                  child: Text(
-                    _lastDonatedDate == null
-                        ? "Select Last Donation Date"
-                        : "${_lastDonatedDate!.day}/${_lastDonatedDate!.month}/${_lastDonatedDate!.year}",
-                    style: TextStyle(
-                      color: _lastDonatedDate == null
-                          ? Colors.grey
-                          : Colors.black87,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              TextFormField(
-                controller: _locationController,
-                readOnly: false,
-                decoration: InputDecoration(
-                  labelText: "Your Current Location",
-                  prefixIcon: const Icon(Icons.location_on),
-                  suffixIcon: IconButton(
-                    icon: _isGettingLocation
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.my_location),
-                    onPressed: _isGettingLocation ? null : _getCurrentLocation,
-                  ),
-                  border: const OutlineInputBorder(),
-                ),
-                onChanged: _searchPlaces,
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return "Location is required";
-                  }
-
-                  if (_latitude == null || _longitude == null) {
-                    return "Please select location from suggestions or use current location";
-                  }
-
-                  return null;
-                },
-              ),
-
-              if (_isSearchingLocation)
-                const Padding(
-                  padding: EdgeInsets.only(top: 8),
-                  child: LinearProgressIndicator(),
-                ),
-
-              _buildLocationSuggestions(),
-
-              const SizedBox(height: 16),
-
-              SwitchListTile(
-                title: const Text("Available to Donate Now"),
-                subtitle: const Text("I can donate today or tomorrow"),
-                value: _isAvailableNow,
-                activeColor: primaryMaroon,
-                onChanged: (value) => setState(() => _isAvailableNow = value),
-              ),
-              const SizedBox(height: 16),
-
-              TextFormField(
-                controller: _messageController,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: "Additional Message (Optional)",
-                  hintText: "E.g., I can donate in Lahore only",
-                  border: OutlineInputBorder(),
-                ),
-              ),
-
-              const SizedBox(height: 40),
-
-              SizedBox(
-                width: double.infinity,
-                height: 56,
-                child: ElevatedButton(
-                  onPressed: _isSubmitting ? null : _submitDonateBloodRequest,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primaryMaroon,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: _isSubmitting
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text(
-                          "Submit",
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                ),
-              ),
-            ],
+  Widget _buildDonationEligibilityNote() {
+    if (_lastDonatedDate == null) {
+      return const Padding(
+        padding: EdgeInsets.only(top: 8),
+        child: Text(
+          "Note: You can donate only if your last donation was at least 3 months ago.",
+          style: TextStyle(
+            color: Colors.black54,
+            fontSize: 12,
           ),
+        ),
+      );
+    }
+
+    final int remainingDays = _remainingDaysUntilEligible();
+
+    if (remainingDays > 0) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Text(
+          "You are not eligible yet. Please wait $remainingDays more days.",
+          style: const TextStyle(
+            color: Colors.red,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      );
+    }
+
+    return const Padding(
+      padding: EdgeInsets.only(top: 8),
+      child: Text(
+        "Eligible to donate.",
+        style: TextStyle(
+          color: Colors.green,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
         ),
       ),
     );
   }
 
   @override
+  Widget build(BuildContext context) {
+    final bool disableForm = _isSubmitting || _showSuccessCard;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Donate Blood"),
+        backgroundColor: primaryMaroon,
+        foregroundColor: Colors.white,
+      ),
+      body: Stack(
+        children: [
+          AbsorbPointer(
+            absorbing: disableForm,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Center(
+                      child: Icon(
+                        Icons.bloodtype,
+                        size: 100,
+                        color: Color(0xFF6B0000),
+                      ),
+                    ),
+
+                    TextFormField(
+                      controller: _nameController,
+                      decoration: const InputDecoration(
+                        labelText: "Your Name",
+                        prefixIcon: Icon(Icons.person),
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) =>
+                          value!.isEmpty ? "Name is required" : null,
+                    ),
+                    const SizedBox(height: 16),
+
+                    TextFormField(
+                      controller: _cnicController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: "CNIC Number",
+                        hintText: "12345-1234567-1",
+                        prefixIcon: Icon(Icons.credit_card),
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) =>
+                          value!.isEmpty ? "CNIC is required" : null,
+                    ),
+                    const SizedBox(height: 16),
+
+                    TextFormField(
+                      controller: _phoneController,
+                      keyboardType: TextInputType.phone,
+                      decoration: const InputDecoration(
+                        labelText: "Phone Number",
+                        prefixIcon: Icon(Icons.phone),
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) =>
+                          value!.isEmpty ? "Phone number is required" : null,
+                    ),
+                    const SizedBox(height: 16),
+
+                    TextFormField(
+                      controller: _guardianNameController,
+                      decoration: const InputDecoration(
+                        labelText: "Guardian Name",
+                        prefixIcon: Icon(Icons.person_outline),
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) =>
+                          value!.isEmpty ? "Guardian name is required" : null,
+                    ),
+                    const SizedBox(height: 16),
+
+                    TextFormField(
+                      controller: _guardianPhoneController,
+                      keyboardType: TextInputType.phone,
+                      decoration: const InputDecoration(
+                        labelText: "Guardian Phone Number",
+                        prefixIcon: Icon(Icons.phone_outlined),
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) =>
+                          value!.isEmpty ? "Guardian phone is required" : null,
+                    ),
+                    const SizedBox(height: 16),
+
+                    DropdownButtonFormField<String>(
+                      value: _selectedBloodGroup,
+                      decoration: const InputDecoration(
+                        labelText: "Blood Group",
+                        prefixIcon: Icon(Icons.bloodtype),
+                        border: OutlineInputBorder(),
+                      ),
+                      items: bloodGroups
+                          .map(
+                            (group) => DropdownMenuItem(
+                              value: group,
+                              child: Text(group),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) =>
+                          setState(() => _selectedBloodGroup = value),
+                      validator: (value) =>
+                          value == null ? "Please select blood group" : null,
+                    ),
+                    const SizedBox(height: 16),
+
+                    InkWell(
+                      onTap: _selectLastDonatedDate,
+                      child: InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: "Last Donated Date",
+                          prefixIcon: Icon(Icons.calendar_today),
+                          border: OutlineInputBorder(),
+                        ),
+                        child: Text(
+                          _lastDonatedDate == null
+                              ? "Select Last Donation Date"
+                              : _formatDisplayDate(_lastDonatedDate!),
+                          style: TextStyle(
+                            color: _lastDonatedDate == null
+                                ? Colors.grey
+                                : Colors.black87,
+                          ),
+                        ),
+                      ),
+                    ),
+                    _buildDonationEligibilityNote(),
+                    const SizedBox(height: 16),
+
+                    TextFormField(
+                      controller: _locationController,
+                      readOnly: false,
+                      decoration: InputDecoration(
+                        labelText: "Your Current Location",
+                        prefixIcon: const Icon(Icons.location_on),
+                        suffixIcon: IconButton(
+                          icon: _isGettingLocation
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.my_location),
+                          onPressed: _isGettingLocation
+                              ? null
+                              : _getCurrentLocation,
+                        ),
+                        border: const OutlineInputBorder(),
+                      ),
+                      onChanged: _searchPlaces,
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return "Location is required";
+                        }
+
+                        if (_latitude == null || _longitude == null) {
+                          return "Please select location from suggestions or use current location";
+                        }
+
+                        return null;
+                      },
+                    ),
+
+                    if (_isSearchingLocation)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 8),
+                        child: LinearProgressIndicator(),
+                      ),
+
+                    _buildLocationSuggestions(),
+
+                    const SizedBox(height: 40),
+
+                    SizedBox(
+                      width: double.infinity,
+                      height: 56,
+                      child: ElevatedButton(
+                        onPressed:
+                            disableForm ? null : _submitDonateBloodRequest,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: primaryMaroon,
+                          disabledBackgroundColor:
+                              primaryMaroon.withOpacity(0.65),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: _isSubmitting
+                            ? const CircularProgressIndicator(
+                                color: Colors.white,
+                              )
+                            : const Text(
+                                "Submit",
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          if (_showSuccessCard)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black.withOpacity(0.18),
+                alignment: Alignment.center,
+                child: _buildSuccessCard(),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  @override
   void dispose() {
+    _successAnimationController.dispose();
+
     _nameController.dispose();
     _cnicController.dispose();
     _phoneController.dispose();
     _guardianNameController.dispose();
     _guardianPhoneController.dispose();
     _locationController.dispose();
-    _messageController.dispose();
+
     super.dispose();
   }
 }

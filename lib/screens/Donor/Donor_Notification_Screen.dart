@@ -3,6 +3,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blood_donation_app/theme.dart';
 import 'package:blood_donation_app/services/auth_token_service.dart';
 
@@ -21,17 +22,78 @@ class _DonorNotificationScreenState extends State<DonorNotificationScreen> {
   String errorMessage = '';
   List<Map<String, dynamic>> notifications = [];
 
+  static const String cacheKey = 'cached_donor_notifications';
+
   @override
   void initState() {
     super.initState();
-    fetchNotifications();
+
+    loadCachedNotifications().then((_) {
+      fetchNotifications(showLoader: notifications.isEmpty);
+    });
   }
 
-  Future<void> fetchNotifications() async {
-    setState(() {
-      isLoading = true;
-      errorMessage = '';
-    });
+  @override
+  void deactivate() {
+    _removeReadNotificationsFromLocalView();
+    super.deactivate();
+  }
+
+  Future<void> loadCachedNotifications() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final String? cachedData = prefs.getString(cacheKey);
+
+      if (cachedData != null) {
+        final List decodedList = jsonDecode(cachedData);
+
+        final List<Map<String, dynamic>> cachedNotifications = decodedList
+            .map<Map<String, dynamic>>(
+              (item) => Map<String, dynamic>.from(item),
+            )
+            .where((item) => item['is_read'] != true)
+            .toList();
+
+        if (!mounted) return;
+
+        setState(() {
+          notifications = cachedNotifications;
+          isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading donor cached notifications: $e');
+    }
+  }
+
+  Future<void> cacheNotifications(List<Map<String, dynamic>> dataList) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      final List<Map<String, dynamic>> unreadOnly = dataList
+          .where((item) => item['is_read'] != true)
+          .map<Map<String, dynamic>>(
+            (item) => Map<String, dynamic>.from(item),
+          )
+          .toList();
+
+      await prefs.setString(cacheKey, jsonEncode(unreadOnly));
+    } catch (e) {
+      debugPrint('Error caching donor notifications: $e');
+    }
+  }
+
+  Future<void> fetchNotifications({bool showLoader = true}) async {
+    if (showLoader && notifications.isEmpty) {
+      setState(() {
+        isLoading = true;
+        errorMessage = '';
+      });
+    } else {
+      setState(() {
+        errorMessage = '';
+      });
+    }
 
     try {
       final response = await AuthTokenService.authorizedGet(
@@ -54,14 +116,20 @@ class _DonorNotificationScreenState extends State<DonorNotificationScreen> {
       if (response.statusCode == 200 && body['success'] == true) {
         final List list = body['data'] is List ? body['data'] : [];
 
+        final List<Map<String, dynamic>> freshNotifications = list
+            .map<Map<String, dynamic>>(
+              (item) => Map<String, dynamic>.from(item),
+            )
+            .where((item) => item['is_read'] != true)
+            .toList();
+
         setState(() {
-          notifications = list
-              .map<Map<String, dynamic>>(
-                (item) => Map<String, dynamic>.from(item),
-              )
-              .toList();
+          notifications = freshNotifications;
+          errorMessage = '';
           isLoading = false;
         });
+
+        await cacheNotifications(freshNotifications);
       } else {
         setState(() {
           errorMessage = body['message'] ?? 'Failed to fetch notifications.';
@@ -72,10 +140,62 @@ class _DonorNotificationScreenState extends State<DonorNotificationScreen> {
       if (!mounted) return;
 
       setState(() {
-        errorMessage = 'Connection Error: $e';
+        errorMessage = notifications.isEmpty ? 'Connection Error: $e' : '';
         isLoading = false;
       });
     }
+  }
+
+  Future<void> markAsRead(String notificationId) async {
+    if (notificationId.isEmpty) return;
+
+    try {
+      await AuthTokenService.authorizedPut(
+        '/notifications/$notificationId/read',
+        {},
+      );
+    } catch (e) {
+      debugPrint('Mark donor notification read error: $e');
+    }
+  }
+
+  Future<void> markNotificationViewed(
+    Map<String, dynamic> item,
+  ) async {
+    final String notificationId = item['id']?.toString() ?? '';
+
+    setState(() {
+      item['is_read'] = true;
+    });
+
+    await cacheNotifications(notifications);
+
+    if (notificationId.isNotEmpty) {
+      await markAsRead(notificationId);
+    }
+  }
+
+  Future<void> _removeReadNotificationsFromLocalView() async {
+    if (notifications.isEmpty) return;
+
+    final List<Map<String, dynamic>> unreadOnly = notifications
+        .where((item) => item['is_read'] != true)
+        .map<Map<String, dynamic>>(
+          (item) => Map<String, dynamic>.from(item),
+        )
+        .toList();
+
+    if (unreadOnly.length == notifications.length) {
+      return;
+    }
+
+    await cacheNotifications(unreadOnly);
+
+    if (!mounted) return;
+
+    setState(() {
+      notifications = unreadOnly;
+    });
   }
 
   IconData getNotificationIcon(String? type) {
@@ -189,10 +309,29 @@ class _DonorNotificationScreenState extends State<DonorNotificationScreen> {
             style: const TextStyle(color: Colors.black54),
           ),
         ),
-        trailing: Text(
-          formatTime(item['created_at']),
-          style: const TextStyle(fontSize: 11, color: Colors.grey),
+        trailing: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              formatTime(item['created_at']),
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
+            ),
+            if (!isRead) ...[
+              const SizedBox(height: 6),
+              Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                  color: primaryMaroon,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ],
+          ],
         ),
+        onTap: () {
+          markNotificationViewed(item);
+        },
       ),
     );
   }
@@ -207,14 +346,17 @@ class _DonorNotificationScreenState extends State<DonorNotificationScreen> {
         foregroundColor: Colors.white,
         actions: [
           IconButton(
-            onPressed: fetchNotifications,
+            onPressed: () async {
+              await _removeReadNotificationsFromLocalView();
+              await fetchNotifications(showLoader: false);
+            },
             icon: const Icon(Icons.refresh),
           ),
         ],
       ),
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
-          : errorMessage.isNotEmpty
+          : errorMessage.isNotEmpty && notifications.isEmpty
               ? Center(
                   child: Padding(
                     padding: const EdgeInsets.all(18),
@@ -228,7 +370,7 @@ class _DonorNotificationScreenState extends State<DonorNotificationScreen> {
                         ),
                         const SizedBox(height: 14),
                         ElevatedButton(
-                          onPressed: fetchNotifications,
+                          onPressed: () => fetchNotifications(showLoader: true),
                           child: const Text('Retry'),
                         ),
                       ],
@@ -238,7 +380,10 @@ class _DonorNotificationScreenState extends State<DonorNotificationScreen> {
               : notifications.isEmpty
                   ? buildEmptyState()
                   : RefreshIndicator(
-                      onRefresh: fetchNotifications,
+                      onRefresh: () async {
+                        await _removeReadNotificationsFromLocalView();
+                        await fetchNotifications(showLoader: false);
+                      },
                       child: ListView.builder(
                         padding: const EdgeInsets.all(12),
                         itemCount: notifications.length,

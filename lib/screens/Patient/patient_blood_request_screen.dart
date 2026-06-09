@@ -4,9 +4,11 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../theme.dart';
 import '../../../services/auth_token_service.dart';
+import 'patient_find_nearby_donors.dart';
 
 class PatientBloodRequestScreen extends StatefulWidget {
   static const String routeName = '/blood_request';
@@ -23,6 +25,7 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
   final _formKey = GlobalKey<FormState>();
 
   String? selectedBloodGroup;
+  String? selectedCity;
 
   final String googleMapsApiKey = "AIzaSyCIm0pDpMsEePYylMAZBuZfj8q3cUn3eHc";
 
@@ -89,6 +92,7 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
     setState(() {
       latitude = null;
       longitude = null;
+      selectedCity = null;
     });
 
     if (query.length < 3) {
@@ -163,7 +167,7 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
       final Uri url = Uri.parse(
         "https://maps.googleapis.com/maps/api/place/details/json"
         "?place_id=$placeId"
-        "&fields=formatted_address,geometry,name"
+        "&fields=formatted_address,geometry,name,address_components"
         "&key=$googleMapsApiKey",
       );
 
@@ -182,11 +186,17 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
           final selectedLocation = geometry?["location"];
 
           if (selectedLocation != null) {
+            final List addressComponents = result["address_components"] ?? [];
+            final String? cityFromComponents =
+                extractCityFromAddressComponents(addressComponents);
+
             setState(() {
               latitude = (selectedLocation["lat"] as num).toDouble();
               longitude = (selectedLocation["lng"] as num).toDouble();
               locationController.text =
                   result["formatted_address"] ?? description;
+              selectedCity = cityFromComponents ??
+                  extractCityFromLocationText(locationController.text);
             });
           }
         }
@@ -269,6 +279,71 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
     }
   }
 
+  String? extractCityFromAddressComponents(List components) {
+    final List<String> priorityTypes = [
+      "locality",
+      "administrative_area_level_3",
+      "administrative_area_level_2",
+      "sublocality",
+      "sublocality_level_1",
+      "postal_town",
+      "administrative_area_level_1",
+    ];
+
+    for (final priorityType in priorityTypes) {
+      for (final component in components) {
+        final List types = component["types"] ?? [];
+        final String name = component["long_name"]?.toString().trim() ?? "";
+
+        if (name.isEmpty) continue;
+
+        if (types.contains(priorityType)) {
+          return name;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  String? extractCityFromLocationText(String? location) {
+    if (location == null || location.trim().isEmpty) return null;
+
+    final parts = location.split(',');
+
+    if (parts.length >= 2) {
+      for (int i = 0; i < parts.length; i++) {
+        final city = parts[i].trim();
+
+        if (city.isEmpty) continue;
+
+        final lowerCity = city.toLowerCase();
+
+        if (lowerCity == "pakistan" || lowerCity == "punjab") {
+          continue;
+        }
+
+        if (RegExp(r'^-?\d+(\.\d+)?$').hasMatch(city)) {
+          continue;
+        }
+
+        if (i > 0) {
+          return city;
+        }
+      }
+    }
+
+    for (final part in parts) {
+      final city = part.trim();
+
+      if (city.isNotEmpty && !RegExp(r'^-?\d+(\.\d+)?$').hasMatch(city)) {
+        return city;
+      }
+    }
+
+    return null;
+  }
+
   Future<String?> getAddressFromCoordinates(
     double latitude,
     double longitude,
@@ -290,7 +365,18 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
         if (data["status"] == "OK" &&
             data["results"] != null &&
             data["results"].isNotEmpty) {
-          return data["results"][0]["formatted_address"];
+          final result = data["results"][0];
+          final String? formattedAddress =
+              result["formatted_address"]?.toString();
+
+          final List addressComponents = result["address_components"] ?? [];
+          final String? cityFromComponents =
+              extractCityFromAddressComponents(addressComponents);
+
+          selectedCity =
+              cityFromComponents ?? extractCityFromLocationText(formattedAddress);
+
+          return formattedAddress;
         }
       }
 
@@ -307,6 +393,7 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
     caseController.clear();
 
     selectedBloodGroup = null;
+    selectedCity = null;
     latitude = null;
     longitude = null;
     placeSuggestions = [];
@@ -318,8 +405,10 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
     _formKey.currentState?.reset();
   }
 
-  Future<void> showSuccessAndRedirect() async {
+  Future<void> showSuccessAndRedirect(String bloodRequestId) async {
     if (!mounted) return;
+
+    debugPrint("Blood Request ID before redirect: $bloodRequestId");
 
     setState(() {
       showSuccessCard = true;
@@ -327,11 +416,22 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
 
     successAnimationController.forward(from: 0);
 
-    await Future.delayed(const Duration(milliseconds: 2200));
+    await Future.delayed(const Duration(milliseconds: 1600));
 
     if (!mounted) return;
 
-    Navigator.pop(context);
+    setState(() {
+      showSuccessCard = false;
+    });
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => FindNearbyDonorsScreen(
+          bloodRequestId: bloodRequestId,
+        ),
+      ),
+    );
   }
 
   Future<void> submitBloodRequest() async {
@@ -379,6 +479,8 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
         {
           "patient_name": patientNameController.text.trim(),
           "location": locationController.text.trim(),
+          "city": selectedCity ??
+              extractCityFromLocationText(locationController.text.trim()),
           "hospital_name": hospitalController.text.trim(),
           "blood_group": selectedBloodGroup,
           "blood_constituents": selectedConstituents,
@@ -401,13 +503,38 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
       if (response.statusCode == 201 && responseBody["success"] == true) {
         ScaffoldMessenger.of(context).clearSnackBars();
 
+        final dynamic responseData = responseBody["data"];
+        final String? bloodRequestId = responseData is Map
+            ? responseData["id"]?.toString()
+            : null;
+
+        debugPrint("Blood Request Submit Response: ${response.body}");
+        debugPrint("Extracted Blood Request ID: $bloodRequestId");
+
+        if (bloodRequestId == null || bloodRequestId.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Blood request ID not found in response."),
+            ),
+          );
+
+          setState(() => isSubmitting = false);
+          return;
+        }
+
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(
+          'latest_active_blood_request_id',
+          bloodRequestId,
+        );
+
         setState(() {
           isSubmitting = false;
         });
 
         clearFormFields();
 
-        await showSuccessAndRedirect();
+        await showSuccessAndRedirect(bloodRequestId);
       } else {
         final String errorMessage =
             responseBody["message"] ?? "Failed to submit blood request.";
@@ -573,7 +700,6 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
                           : null,
                     ),
                     const SizedBox(height: 20),
-
                     _buildLabel("Location"),
                     const SizedBox(height: 8),
                     TextFormField(
@@ -609,17 +735,13 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
                         return null;
                       },
                     ),
-
                     if (isSearchingLocation)
                       const Padding(
                         padding: EdgeInsets.only(top: 8),
                         child: LinearProgressIndicator(),
                       ),
-
                     buildLocationSuggestions(),
-
                     const SizedBox(height: 20),
-
                     _buildLabel("Hospital Name"),
                     const SizedBox(height: 8),
                     TextFormField(
@@ -630,7 +752,6 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
                           : null,
                     ),
                     const SizedBox(height: 24),
-
                     _buildLabel("Blood Group"),
                     const SizedBox(height: 12),
                     Wrap(
@@ -648,8 +769,7 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
                               vertical: 14,
                             ),
                             decoration: BoxDecoration(
-                              color:
-                                  isSelected ? primaryMaroon : Colors.white,
+                              color: isSelected ? primaryMaroon : Colors.white,
                               border: Border.all(
                                 color: isSelected
                                     ? primaryMaroon
@@ -672,7 +792,6 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
                       }).toList(),
                     ),
                     const SizedBox(height: 24),
-
                     _buildLabel("Blood Constituents"),
                     const SizedBox(height: 8),
                     Container(
@@ -694,7 +813,6 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
                       ),
                     ),
                     const SizedBox(height: 24),
-
                     _buildLabel("Case"),
                     const SizedBox(height: 8),
                     TextFormField(
@@ -706,7 +824,6 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
                           : null,
                     ),
                     const SizedBox(height: 40),
-
                     SizedBox(
                       width: double.infinity,
                       height: 56,
@@ -744,7 +861,6 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
               ),
             ),
           ),
-
           if (showSuccessCard)
             Positioned.fill(
               child: Container(
@@ -773,6 +889,13 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
       hintText: hint,
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(10),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(
+          color: primaryMaroon,
+          width: 2.0,
+        ),
       ),
       suffixIcon: suffixIcon,
       contentPadding: const EdgeInsets.symmetric(
