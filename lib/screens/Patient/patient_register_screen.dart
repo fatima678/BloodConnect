@@ -1,11 +1,12 @@
 // lib/screens/patients/patient_register_screen.dart
-import 'dart:convert';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 
 import '../../theme.dart';
 import '../../routes.dart';
+import '../../sdk/auth/auth_sdk.dart';
+import '../../sdk/core/sdk_exception.dart';
 
 class PatientRegisterScreen extends StatefulWidget {
   const PatientRegisterScreen({super.key});
@@ -25,9 +26,6 @@ class _PatientRegisterScreenState extends State<PatientRegisterScreen> {
   bool isLoading = false;
   bool autoValidate = false;
   bool obscurePassword = true;
-
-  final String registerUrl =
-      "https://manliness-smugness-qualm.ngrok-free.dev/api/register";
 
   void showMessage({
     required String message,
@@ -113,59 +111,6 @@ class _PatientRegisterScreenState extends State<PatientRegisterScreen> {
     return null;
   }
 
-  Map<String, dynamic> safeJsonDecode(String body) {
-    try {
-      final dynamic decoded = jsonDecode(body);
-
-      if (decoded is Map<String, dynamic>) {
-        return decoded;
-      }
-
-      return {};
-    } catch (_) {
-      return {};
-    }
-  }
-
-  String getApiErrorMessage({
-    required int statusCode,
-    required Map<String, dynamic> data,
-  }) {
-    String errorMessage = data['message']?.toString() ?? 'Registration failed.';
-
-    if (statusCode == 409) {
-      return 'This email is already registered. Please login.';
-    }
-
-    if (statusCode == 422) {
-      if (data['errors'] is Map) {
-        final Map errors = data['errors'] as Map;
-
-        if (errors.values.isNotEmpty) {
-          final dynamic firstErrorList = errors.values.first;
-
-          if (firstErrorList is List && firstErrorList.isNotEmpty) {
-            return firstErrorList.first.toString();
-          }
-        }
-      }
-
-      return errorMessage.isNotEmpty
-          ? errorMessage
-          : 'Please check your entered details and try again.';
-    }
-
-    if (statusCode >= 500) {
-      if (data['error'] != null && data['error'].toString().trim().isNotEmpty) {
-        return 'Server error: ${data['error']}';
-      }
-
-      return 'Server error. Please try again later.';
-    }
-
-    return errorMessage;
-  }
-
   Future<void> registerPatient() async {
     FocusScope.of(context).unfocus();
 
@@ -189,57 +134,66 @@ class _PatientRegisterScreenState extends State<PatientRegisterScreen> {
     try {
       setState(() => isLoading = true);
 
-      final http.Response response = await http
-          .post(
-            Uri.parse(registerUrl),
-            headers: {
-              'Accept': 'application/json',
-              'Content-Type': 'application/json',
-              'ngrok-skip-browser-warning': 'true',
-            },
-            body: jsonEncode({
-              'name': name,
-              'email': email,
-              'phone': phone,
-              'password': password,
-              'role': 'patient',
-            }),
-          )
-          .timeout(const Duration(seconds: 30));
+      await AuthSdk.registerUser(
+        name: name,
+        email: email,
+        phone: phone,
+        password: password,
+        role: 'patient',
+      );
 
-      final Map<String, dynamic> data = safeJsonDecode(response.body);
+      final firebaseUser = FirebaseAuth.instance.currentUser;
+
+      if (firebaseUser != null && !firebaseUser.emailVerified) {
+        await firebaseUser.sendEmailVerification();
+      }
+
+      /*
+        Important:
+        FirebaseAuth createUserWithEmailAndPassword registration ke baad
+        user ko automatically logged-in kar deta hai.
+
+        Email verification send karne ke baad old Laravel/API flow jaisa
+        behavior maintain karne ke liye user ko logout karke login screen
+        par bheja ja raha hai.
+      */
+      await AuthSdk.logout();
 
       if (!mounted) return;
 
       setState(() => isLoading = false);
 
-      if (response.statusCode == 201 && data['success'] == true) {
-        showMessage(
-          message: data['message']?.toString() ?? 'Registration successful.',
-          backgroundColor: Colors.green,
-        );
-
-        await Future.delayed(const Duration(milliseconds: 600));
-
-        if (!mounted) return;
-
-        Navigator.pushReplacementNamed(context, AppRoutes.patientLogin);
-        return;
-      }
-
-      final String errorMessage = getApiErrorMessage(
-        statusCode: response.statusCode,
-        data: data,
+      showMessage(
+        message: 'User registered successfully. Verification email sent.',
+        backgroundColor: Colors.green,
       );
 
-      showMessage(message: errorMessage);
+      await Future.delayed(const Duration(milliseconds: 900));
+
+      if (!mounted) return;
+
+      Navigator.pushReplacementNamed(context, AppRoutes.patientLogin);
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+
+      setState(() => isLoading = false);
+
+      showMessage(
+        message: e.message ?? 'Failed to send verification email.',
+      );
+    } on SdkException catch (e) {
+      if (!mounted) return;
+
+      setState(() => isLoading = false);
+
+      showMessage(message: e.message);
     } catch (e) {
       if (!mounted) return;
 
       setState(() => isLoading = false);
 
       showMessage(
-        message: 'Connection error. Please check your internet/API URL.',
+        message: 'Registration failed. Please try again.',
       );
     }
   }
@@ -247,7 +201,6 @@ class _PatientRegisterScreenState extends State<PatientRegisterScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // Height structure expansion bottom fix cover
       backgroundColor: const Color(0xFF8B0000),
       body: Container(
         width: double.infinity,
@@ -363,9 +316,10 @@ class _PatientRegisterScreenState extends State<PatientRegisterScreen> {
                               "Register",
                               textAlign: TextAlign.center,
                               style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: primaryMaroon),
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: primaryMaroon,
+                              ),
                             ),
                           ),
                         ),
@@ -474,6 +428,7 @@ class _PatientRegisterScreenState extends State<PatientRegisterScreen> {
                       ),
                     ),
                   ),
+
                   const SizedBox(height: 30),
                 ],
               ),
@@ -558,5 +513,14 @@ class _PatientRegisterScreenState extends State<PatientRegisterScreen> {
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    emailController.dispose();
+    phoneController.dispose();
+    passwordController.dispose();
+    super.dispose();
   }
 }

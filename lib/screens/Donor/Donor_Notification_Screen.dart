@@ -4,8 +4,10 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import 'package:blood_donation_app/theme.dart';
-import 'package:blood_donation_app/services/auth_token_service.dart';
+import 'package:blood_donation_app/sdk/core/sdk_exception.dart';
+import 'package:blood_donation_app/sdk/donor/donor_notification_sdk.dart';
 
 class DonorNotificationScreen extends StatefulWidget {
   static const String routeName = '/donor-notifications';
@@ -44,25 +46,49 @@ class _DonorNotificationScreenState extends State<DonorNotificationScreen> {
       final prefs = await SharedPreferences.getInstance();
       final String? cachedData = prefs.getString(cacheKey);
 
-      if (cachedData != null) {
-        final List decodedList = jsonDecode(cachedData);
-
-        final List<Map<String, dynamic>> cachedNotifications = decodedList
-            .map<Map<String, dynamic>>(
-              (item) => Map<String, dynamic>.from(item),
-            )
-            .where((item) => item['is_read'] != true)
-            .toList();
-
+      if (cachedData == null || cachedData.trim().isEmpty) {
         if (!mounted) return;
 
         setState(() {
-          notifications = cachedNotifications;
           isLoading = false;
         });
+
+        return;
       }
+
+      final decoded = jsonDecode(cachedData);
+
+      if (decoded is! List) {
+        if (!mounted) return;
+
+        setState(() {
+          isLoading = false;
+        });
+
+        return;
+      }
+
+      final List<Map<String, dynamic>> cachedNotifications = decoded
+          .map<Map<String, dynamic>>(
+            (item) => Map<String, dynamic>.from(item),
+          )
+          .where((item) => item['is_read'] != true)
+          .toList();
+
+      if (!mounted) return;
+
+      setState(() {
+        notifications = cachedNotifications;
+        isLoading = false;
+      });
     } catch (e) {
       debugPrint('Error loading donor cached notifications: $e');
+
+      if (!mounted) return;
+
+      setState(() {
+        isLoading = false;
+      });
     }
   }
 
@@ -96,64 +122,51 @@ class _DonorNotificationScreenState extends State<DonorNotificationScreen> {
     }
 
     try {
-      final response = await AuthTokenService.authorizedGet(
-        '/notifications?role=donor&limit=50',
+      final List<Map<String, dynamic>> freshList =
+          await DonorNotificationSdk.fetchDonorNotifications(
+        limit: 50,
       );
 
-      debugPrint('Donor Notifications Status: ${response.statusCode}');
-      debugPrint('Donor Notifications Body: ${response.body}');
-
-      Map<String, dynamic> body = {};
-
-      try {
-        body = jsonDecode(response.body);
-      } catch (_) {
-        body = {};
-      }
+      final List<Map<String, dynamic>> freshNotifications = freshList
+          .where((item) => item['is_read'] != true)
+          .map<Map<String, dynamic>>(
+            (item) => Map<String, dynamic>.from(item),
+          )
+          .toList();
 
       if (!mounted) return;
 
-      if (response.statusCode == 200 && body['success'] == true) {
-        final List list = body['data'] is List ? body['data'] : [];
+      setState(() {
+        notifications = freshNotifications;
+        errorMessage = '';
+        isLoading = false;
+      });
 
-        final List<Map<String, dynamic>> freshNotifications = list
-            .map<Map<String, dynamic>>(
-              (item) => Map<String, dynamic>.from(item),
-            )
-            .where((item) => item['is_read'] != true)
-            .toList();
+      await cacheNotifications(freshNotifications);
+    } on SdkException catch (e) {
+      if (!mounted) return;
 
-        setState(() {
-          notifications = freshNotifications;
-          errorMessage = '';
-          isLoading = false;
-        });
-
-        await cacheNotifications(freshNotifications);
-      } else {
-        setState(() {
-          errorMessage = body['message'] ?? 'Failed to fetch notifications.';
-          isLoading = false;
-        });
-      }
+      setState(() {
+        errorMessage = notifications.isEmpty ? e.message : '';
+        isLoading = false;
+      });
     } catch (e) {
       if (!mounted) return;
 
       setState(() {
-        errorMessage = notifications.isEmpty ? 'Connection Error: $e' : '';
+        errorMessage = notifications.isEmpty ? 'Error: $e' : '';
         isLoading = false;
       });
     }
   }
 
   Future<void> markAsRead(String notificationId) async {
-    if (notificationId.isEmpty) return;
+    if (notificationId.trim().isEmpty) return;
 
     try {
-      await AuthTokenService.authorizedPut(
-        '/notifications/$notificationId/read',
-        {},
-      );
+      await DonorNotificationSdk.markAsRead(notificationId);
+    } on SdkException catch (e) {
+      debugPrint('Mark donor notification read SDK error: ${e.message}');
     } catch (e) {
       debugPrint('Mark donor notification read error: $e');
     }
@@ -162,7 +175,10 @@ class _DonorNotificationScreenState extends State<DonorNotificationScreen> {
   Future<void> markNotificationViewed(
     Map<String, dynamic> item,
   ) async {
-    final String notificationId = item['id']?.toString() ?? '';
+    final String notificationId =
+        item['id']?.toString() ??
+        item['notification_id']?.toString() ??
+        '';
 
     setState(() {
       item['is_read'] = true;
@@ -170,9 +186,11 @@ class _DonorNotificationScreenState extends State<DonorNotificationScreen> {
 
     await cacheNotifications(notifications);
 
-    if (notificationId.isNotEmpty) {
+    if (notificationId.trim().isNotEmpty) {
       await markAsRead(notificationId);
     }
+
+    await _removeReadNotificationsFromLocalView();
   }
 
   Future<void> _removeReadNotificationsFromLocalView() async {
@@ -245,6 +263,45 @@ class _DonorNotificationScreenState extends State<DonorNotificationScreen> {
     }
   }
 
+  String _readTitle(Map<String, dynamic> item) {
+    final value = item['title']?.toString().trim();
+
+    if (value != null && value.isNotEmpty && value.toLowerCase() != 'null') {
+      return value;
+    }
+
+    return 'New Blood Request';
+  }
+
+  String _readBody(Map<String, dynamic> item) {
+    final body = item['body']?.toString().trim();
+
+    if (body != null && body.isNotEmpty && body.toLowerCase() != 'null') {
+      return body;
+    }
+
+    final patientName = item['patient_name']?.toString().trim() ?? 'Patient';
+
+    final bloodGroup =
+        item['patient_blood_group']?.toString().trim().isNotEmpty == true
+            ? item['patient_blood_group'].toString()
+            : item['blood_group']?.toString().trim().isNotEmpty == true
+                ? item['blood_group'].toString()
+                : 'N/A';
+
+    final hospital =
+        item['hospital_name']?.toString().trim().isNotEmpty == true
+            ? item['hospital_name'].toString()
+            : 'Hospital not provided';
+
+    final location =
+        item['patient_location']?.toString().trim().isNotEmpty == true
+            ? item['patient_location'].toString()
+            : 'Location not provided';
+
+    return '$patientName needs $bloodGroup blood at $hospital. Location: $location';
+  }
+
   Widget buildEmptyState() {
     return const Center(
       child: Column(
@@ -266,8 +323,8 @@ class _DonorNotificationScreenState extends State<DonorNotificationScreen> {
   }
 
   Widget buildNotificationTile(Map<String, dynamic> item) {
-    final String title = item['title']?.toString() ?? 'Notification';
-    final String body = item['body']?.toString() ?? '';
+    final String title = _readTitle(item);
+    final String body = _readBody(item);
     final String? type = item['type']?.toString();
     final bool isRead = item['is_read'] == true;
 

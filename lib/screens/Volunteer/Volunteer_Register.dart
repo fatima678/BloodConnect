@@ -1,91 +1,224 @@
 // lib/screens/Volunteer/Volunteer_Register.dart
-import 'dart:convert';
+
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 
 import '../../theme.dart';
 import '../../../routes.dart';
 import '../Volunteer/Volunteer_Login_Screen.dart';
+import '../../sdk/auth/auth_sdk.dart';
+import '../../sdk/core/sdk_exception.dart';
 
 class VolunteerRegisterScreen extends StatefulWidget {
   const VolunteerRegisterScreen({super.key});
 
   @override
-  State<VolunteerRegisterScreen> createState() => _VolunteerRegisterScreenState();
+  State<VolunteerRegisterScreen> createState() =>
+      _VolunteerRegisterScreenState();
 }
 
 class _VolunteerRegisterScreenState extends State<VolunteerRegisterScreen> {
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+
   final TextEditingController nameController = TextEditingController();
   final TextEditingController emailController = TextEditingController();
   final TextEditingController phoneController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
 
   String? selectedBloodGroup;
-  bool isLoading = false;
 
-  final List<String> bloodGroups = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
-  final String registerUrl = "https://manliness-smugness-qualm.ngrok-free.dev/api/register";
+  bool isLoading = false;
+  bool autoValidate = false;
+  bool obscurePassword = true;
+
+  final List<String> bloodGroups = [
+    'A+',
+    'A-',
+    'B+',
+    'B-',
+    'AB+',
+    'AB-',
+    'O+',
+    'O-',
+  ];
+
+  void showMessage({
+    required String message,
+    Color backgroundColor = Colors.red,
+  }) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: backgroundColor,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  String? validateName(String? value) {
+    final String text = value?.trim() ?? '';
+
+    if (text.isEmpty) {
+      return 'Full name is required.';
+    }
+
+    if (text.length < 2) {
+      return 'Full name must be at least 2 characters.';
+    }
+
+    return null;
+  }
+
+  String? validateEmail(String? value) {
+    final String email = value?.trim() ?? '';
+
+    if (email.isEmpty) {
+      return 'Email is required.';
+    }
+
+    final RegExp emailRegex = RegExp(
+      r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$',
+    );
+
+    if (!emailRegex.hasMatch(email)) {
+      return 'Please enter a valid email address.';
+    }
+
+    return null;
+  }
+
+  String? validatePhone(String? value) {
+    final String phone = value?.trim() ?? '';
+
+    if (phone.isEmpty) {
+      return 'Phone number is required.';
+    }
+
+    final String cleanedPhone = phone.replaceAll(RegExp(r'[\s-]'), '');
+
+    final RegExp phoneRegex = RegExp(r'^(03[0-9]{9}|\+923[0-9]{9})$');
+
+    if (!phoneRegex.hasMatch(cleanedPhone)) {
+      return 'Enter valid Pakistani number: 03001234567 or +923001234567.';
+    }
+
+    return null;
+  }
+
+  String? validatePassword(String? value) {
+    final String password = value ?? '';
+
+    if (password.trim().isEmpty) {
+      return 'Password is required.';
+    }
+
+    if (password.length < 6) {
+      return 'Password must be at least 6 characters.';
+    }
+
+    if (password.contains(' ')) {
+      return 'Password should not contain spaces.';
+    }
+
+    return null;
+  }
+
+  String? validateBloodGroup(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return 'Please select a blood type.';
+    }
+
+    return null;
+  }
 
   Future<void> registerVolunteer() async {
+    FocusScope.of(context).unfocus();
+
+    setState(() {
+      autoValidate = true;
+    });
+
+    if (!_formKey.currentState!.validate()) {
+      showMessage(message: 'Please correct the highlighted fields.');
+      return;
+    }
+
     final String name = nameController.text.trim();
-    final String email = emailController.text.trim();
-    final String phone = phoneController.text.trim();
-    final String password = passwordController.text.trim();
-
-    if (name.isEmpty || email.isEmpty || phone.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please fill all fields")),
-      );
-      return;
-    }
-
-    if (selectedBloodGroup == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please select a blood type")),
-      );
-      return;
-    }
+    final String email = emailController.text.trim().toLowerCase();
+    final String phone = phoneController.text.trim().replaceAll(
+          RegExp(r'[\s-]'),
+          '',
+        );
+    final String password = passwordController.text;
 
     try {
       setState(() => isLoading = true);
 
-      final response = await http.post(
-        Uri.parse(registerUrl),
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'ngrok-skip-browser-warning': 'true',
-        },
-        body: jsonEncode({
-          'name': name,
-          'email': email,
-          'phone': phone,
-          'password': password,
-          'blood_group': selectedBloodGroup,
-          'role': 'team_volunteer',
-        }),
+      await AuthSdk.registerUser(
+        name: name,
+        email: email,
+        phone: phone,
+        password: password,
+        role: 'team_volunteer',
+        bloodGroup: selectedBloodGroup,
       );
 
-      final data = jsonDecode(response.body);
+      final firebaseUser = FirebaseAuth.instance.currentUser;
+
+      if (firebaseUser != null && !firebaseUser.emailVerified) {
+        await firebaseUser.sendEmailVerification();
+      }
+
+      /*
+        FirebaseAuth registration ke baad user automatically logged-in ho jata hai.
+        Email verification send karne ke baad old flow maintain karne ke liye
+        logout karke volunteer login screen par redirect kar rahe hain.
+      */
+      await AuthSdk.logout();
+
+      if (!mounted) return;
+
       setState(() => isLoading = false);
 
-      if (response.statusCode == 201 && data['success'] == true) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Registration Successful"), backgroundColor: Colors.green),
-        );
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const VolunteerLoginScreen()),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(data['message'] ?? "Registration Failed"), backgroundColor: Colors.red),
-        );
-      }
-    } catch (e) {
+      showMessage(
+        message: 'Registration successful. Verification email sent.',
+        backgroundColor: Colors.green,
+      );
+
+      await Future.delayed(const Duration(milliseconds: 900));
+
+      if (!mounted) return;
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const VolunteerLoginScreen(),
+        ),
+      );
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+
       setState(() => isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+
+      showMessage(
+        message: e.message ?? 'Failed to send verification email.',
+      );
+    } on SdkException catch (e) {
+      if (!mounted) return;
+
+      setState(() => isLoading = false);
+
+      showMessage(message: e.message);
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() => isLoading = false);
+
+      showMessage(
+        message: 'Registration failed. Please try again.',
       );
     }
   }
@@ -93,7 +226,10 @@ class _VolunteerRegisterScreenState extends State<VolunteerRegisterScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFF8B0000),
       body: Container(
+        width: double.infinity,
+        height: double.infinity,
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
@@ -103,34 +239,72 @@ class _VolunteerRegisterScreenState extends State<VolunteerRegisterScreen> {
         ),
         child: SafeArea(
           child: SingleChildScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Column(
                 children: [
-                  const SizedBox(height: 60),
+                  const SizedBox(height: 20),
+
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: IconButton(
+                        icon: const Icon(
+                          Icons.arrow_back_ios_new_rounded,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                        onPressed: isLoading
+                            ? null
+                            : () {
+                                if (Navigator.canPop(context)) {
+                                  Navigator.pop(context);
+                                } else {
+                                  Navigator.pushReplacementNamed(context, '/');
+                                }
+                              },
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
 
                   const Text(
                     "Welcome Back",
-                    style: TextStyle(fontSize: 34, fontWeight: FontWeight.bold, color: Colors.white),
+                    style: TextStyle(
+                      fontSize: 34,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
                   ),
 
                   const SizedBox(height: 12),
 
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 10),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 28,
+                      vertical: 10,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.white.withOpacity(0.18),
                       borderRadius: BorderRadius.circular(30),
                     ),
                     child: const Text(
                       "Create New Account",
-                      style: TextStyle(color: Colors.white, fontSize: 16.5),
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16.5,
+                      ),
                     ),
                   ),
 
                   const SizedBox(height: 40),
 
-                  // Toggle Buttons
                   Container(
                     decoration: BoxDecoration(
                       color: Colors.white.withOpacity(0.15),
@@ -140,23 +314,43 @@ class _VolunteerRegisterScreenState extends State<VolunteerRegisterScreen> {
                       children: [
                         Expanded(
                           child: GestureDetector(
-                            onTap: () => Navigator.pushReplacementNamed(context, AppRoutes.volunteerLogin),
+                            onTap: isLoading
+                                ? null
+                                : () => Navigator.pushReplacementNamed(
+                                      context,
+                                      AppRoutes.volunteerLogin,
+                                    ),
                             child: Container(
                               padding: const EdgeInsets.symmetric(vertical: 14),
-                              child: const Text("Login", textAlign: TextAlign.center, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                              child: const Text(
+                                "Login",
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
                             ),
                           ),
                         ),
                         Expanded(
-                          child: GestureDetector(
-                            onTap: () {},
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              decoration: const BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.horizontal(right: Radius.circular(30)),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            decoration: const BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.horizontal(
+                                right: Radius.circular(30),
                               ),
-                              child: Text("Register", textAlign: TextAlign.center, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: primaryMaroon)),
+                            ),
+                            child: const Text(
+                              "Register",
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: primaryMaroon,
+                              ),
                             ),
                           ),
                         ),
@@ -167,31 +361,113 @@ class _VolunteerRegisterScreenState extends State<VolunteerRegisterScreen> {
                   const SizedBox(height: 40),
 
                   Container(
-                    decoration: BoxDecoration(color: whiteColor, borderRadius: BorderRadius.circular(32)),
+                    decoration: BoxDecoration(
+                      color: whiteColor,
+                      borderRadius: BorderRadius.circular(32),
+                    ),
                     padding: const EdgeInsets.fromLTRB(24, 36, 24, 40),
-                    child: Column(
-                      children: [
-                        buildField(hint: "Full Name", icon: Icons.person, controller: nameController),
-                        const SizedBox(height: 20),
-                        buildField(hint: "Email", icon: Icons.email, controller: emailController),
-                        const SizedBox(height: 20),
-                        buildField(hint: "Phone", icon: Icons.phone, controller: phoneController),
-                        const SizedBox(height: 20),
-                        buildField(hint: "Password", icon: Icons.lock, controller: passwordController, isPass: true),
-                        const SizedBox(height: 20),
-                        
-                        // Blood Type Dropdown Field
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                          decoration: BoxDecoration(color: const Color(0xFFF1F3F6), borderRadius: BorderRadius.circular(15)),
-                          child: DropdownButtonFormField<String>(
+                    child: Form(
+                      key: _formKey,
+                      autovalidateMode: autoValidate
+                          ? AutovalidateMode.onUserInteraction
+                          : AutovalidateMode.disabled,
+                      child: Column(
+                        children: [
+                          buildField(
+                            hint: "Full Name",
+                            icon: Icons.person,
+                            controller: nameController,
+                            keyboardType: TextInputType.name,
+                            textInputAction: TextInputAction.next,
+                            validator: validateName,
+                          ),
+
+                          const SizedBox(height: 20),
+
+                          buildField(
+                            hint: "Email",
+                            icon: Icons.email,
+                            controller: emailController,
+                            keyboardType: TextInputType.emailAddress,
+                            textInputAction: TextInputAction.next,
+                            validator: validateEmail,
+                          ),
+
+                          const SizedBox(height: 20),
+
+                          buildField(
+                            hint: "Phone",
+                            icon: Icons.phone,
+                            controller: phoneController,
+                            keyboardType: TextInputType.phone,
+                            textInputAction: TextInputAction.next,
+                            validator: validatePhone,
+                          ),
+
+                          const SizedBox(height: 20),
+
+                          buildField(
+                            hint: "Password",
+                            icon: Icons.lock,
+                            controller: passwordController,
+                            isPass: true,
+                            keyboardType: TextInputType.visiblePassword,
+                            textInputAction: TextInputAction.next,
+                            validator: validatePassword,
+                          ),
+
+                          const SizedBox(height: 20),
+
+                          DropdownButtonFormField<String>(
                             value: selectedBloodGroup,
-                            hint: const Text("Select blood type", style: TextStyle(color: Colors.grey)),
-                            icon: Icon(Icons.arrow_drop_down, color: primaryMaroon),
+                            validator: validateBloodGroup,
                             decoration: InputDecoration(
-                              prefixIcon: Icon(Icons.bloodtype, color: primaryMaroon),
-                              border: InputBorder.none,
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              filled: true,
+                              fillColor: const Color(0xFFF1F3F6),
+                              prefixIcon: const Icon(
+                                Icons.bloodtype,
+                                color: primaryMaroon,
+                              ),
+                              hintText: "Select blood type",
+                              hintStyle: const TextStyle(color: Colors.grey),
+                              errorMaxLines: 2,
+                              border: OutlineInputBorder(
+                                borderSide: BorderSide.none,
+                                borderRadius: BorderRadius.circular(15),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderSide: BorderSide.none,
+                                borderRadius: BorderRadius.circular(15),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(15),
+                                borderSide: const BorderSide(
+                                  color: primaryMaroon,
+                                  width: 1.2,
+                                ),
+                              ),
+                              errorBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(15),
+                                borderSide: const BorderSide(
+                                  color: Colors.red,
+                                  width: 1.1,
+                                ),
+                              ),
+                              focusedErrorBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(15),
+                                borderSide: const BorderSide(
+                                  color: Colors.red,
+                                  width: 1.2,
+                                ),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 18,
+                              ),
+                            ),
+                            icon: const Icon(
+                              Icons.arrow_drop_down,
+                              color: primaryMaroon,
                             ),
                             items: bloodGroups.map((String group) {
                               return DropdownMenuItem<String>(
@@ -199,54 +475,93 @@ class _VolunteerRegisterScreenState extends State<VolunteerRegisterScreen> {
                                 child: Text(group),
                               );
                             }).toList(),
-                            onChanged: (String? value) {
-                              setState(() {
-                                selectedBloodGroup = value;
-                              });
-                            },
+                            onChanged: isLoading
+                                ? null
+                                : (String? value) {
+                                    setState(() {
+                                      selectedBloodGroup = value;
+                                    });
+                                  },
                           ),
-                        ),
 
-                        const SizedBox(height: 25),
+                          const SizedBox(height: 25),
 
-                        // Volunteer Info
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: primaryMaroon.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(15),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: primaryMaroon.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(15),
+                            ),
+                            child: const Text(
+                              "Registering as: Volunteer Team",
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold,
+                                color: primaryMaroon,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
                           ),
-                          // child: const Text(
-                          //   "Registering as: Volunteer Team",
-                          //   style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: primaryMaroon),
-                          //   textAlign: TextAlign.center,
-                          // ),
-                        ),
 
-                        const SizedBox(height: 35),
+                          const SizedBox(height: 35),
 
-                        SizedBox(
-                          width: double.infinity,
-                          height: 55,
-                          child: ElevatedButton(
-                            style: ElevatedButton.styleFrom(backgroundColor: primaryMaroon, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))),
-                            onPressed: isLoading ? null : registerVolunteer,
-                            child: isLoading
-                                ? const CircularProgressIndicator(color: Colors.white)
-                                : const Text("REGISTER", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 55,
+                            child: ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: primaryMaroon,
+                                disabledBackgroundColor:
+                                    primaryMaroon.withOpacity(0.65),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(15),
+                                ),
+                              ),
+                              onPressed: isLoading ? null : registerVolunteer,
+                              child: isLoading
+                                  ? const SizedBox(
+                                      width: 24,
+                                      height: 24,
+                                      child: CircularProgressIndicator(
+                                        color: Colors.white,
+                                        strokeWidth: 2.5,
+                                      ),
+                                    )
+                                  : const Text(
+                                      "REGISTER",
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
 
                   const SizedBox(height: 30),
 
                   TextButton(
-                    onPressed: () => Navigator.pushReplacementNamed(context, AppRoutes.volunteerLogin),
-                    child: const Text("Already have an account? Login", style: TextStyle(color: whiteColor, fontWeight: FontWeight.bold)),
+                    onPressed: isLoading
+                        ? null
+                        : () => Navigator.pushReplacementNamed(
+                              context,
+                              AppRoutes.volunteerLogin,
+                            ),
+                    child: const Text(
+                      "Already have an account? Login",
+                      style: TextStyle(
+                        color: whiteColor,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ),
+
+                  const SizedBox(height: 30),
                 ],
               ),
             ),
@@ -256,17 +571,77 @@ class _VolunteerRegisterScreenState extends State<VolunteerRegisterScreen> {
     );
   }
 
-  Widget buildField({required String hint, required IconData icon, required TextEditingController controller, bool isPass = false}) {
-    return Container(
-      decoration: BoxDecoration(color: const Color(0xFFF1F3F6), borderRadius: BorderRadius.circular(15)),
-      child: TextField(
-        controller: controller,
-        obscureText: isPass,
-        decoration: InputDecoration(
-          prefixIcon: Icon(icon, color: primaryMaroon),
-          hintText: hint,
-          border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+  Widget buildField({
+    required String hint,
+    required IconData icon,
+    required TextEditingController controller,
+    required String? Function(String?) validator,
+    bool isPass = false,
+    TextInputType keyboardType = TextInputType.text,
+    TextInputAction textInputAction = TextInputAction.next,
+    void Function(String)? onFieldSubmitted,
+  }) {
+    return TextFormField(
+      controller: controller,
+      obscureText: isPass ? obscurePassword : false,
+      keyboardType: keyboardType,
+      textInputAction: textInputAction,
+      validator: validator,
+      enabled: !isLoading,
+      onFieldSubmitted: onFieldSubmitted,
+      decoration: InputDecoration(
+        filled: true,
+        fillColor: const Color(0xFFF1F3F6),
+        prefixIcon: Icon(icon, color: primaryMaroon),
+        suffixIcon: isPass
+            ? IconButton(
+                icon: Icon(
+                  obscurePassword ? Icons.visibility_off : Icons.visibility,
+                  color: primaryMaroon,
+                ),
+                onPressed: isLoading
+                    ? null
+                    : () {
+                        setState(() {
+                          obscurePassword = !obscurePassword;
+                        });
+                      },
+              )
+            : null,
+        hintText: hint,
+        errorMaxLines: 2,
+        border: OutlineInputBorder(
+          borderSide: BorderSide.none,
+          borderRadius: BorderRadius.circular(15),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderSide: BorderSide.none,
+          borderRadius: BorderRadius.circular(15),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(15),
+          borderSide: const BorderSide(
+            color: primaryMaroon,
+            width: 1.2,
+          ),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(15),
+          borderSide: const BorderSide(
+            color: Colors.red,
+            width: 1.1,
+          ),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(15),
+          borderSide: const BorderSide(
+            color: Colors.red,
+            width: 1.2,
+          ),
+        ),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 20,
+          vertical: 18,
         ),
       ),
     );

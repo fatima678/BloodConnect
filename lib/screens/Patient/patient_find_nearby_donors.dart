@@ -1,13 +1,11 @@
 // lib/screens/FindNearbyDonorsScreen.dart
 
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:blood_donation_app/theme.dart';
-import 'package:blood_donation_app/services/auth_token_service.dart';
+import 'package:blood_donation_app/sdk/core/sdk_exception.dart';
+import 'package:blood_donation_app/sdk/patient/donation_request_sdk.dart';
 
 class FindNearbyDonorsScreen extends StatefulWidget {
   static const String routeName = '/find-nearby-donors';
@@ -217,9 +215,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     for (final key in keys) {
       final value = data[key];
 
-      if (value == null) {
-        continue;
-      }
+      if (value == null) continue;
 
       final text = value.toString().trim();
 
@@ -283,10 +279,6 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     return coordinatePattern.hasMatch(text) || numberOnlyPattern.hasMatch(text);
   }
 
-  String _serverRadiusValue() {
-    return _radius.round().toString();
-  }
-
   Map<String, dynamic>? _historyForDonor(String donorRequestId) {
     if (donorRequestId.trim().isEmpty) {
       return null;
@@ -301,68 +293,39 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     return null;
   }
 
-  void _setBloodRequestMeta(Map<String, dynamic> responseBody) {
-    final dynamic data = responseBody["data"];
-
-    Map<String, dynamic> bloodRequest = {};
-
-    if (data is Map && data["blood_request"] is Map) {
-      bloodRequest = Map<String, dynamic>.from(data["blood_request"]);
-    }
-
+  void _setBloodRequestMeta(Map<String, dynamic> bloodRequest) {
     final String? bloodGroup = _readString(
-          bloodRequest,
-          [
-            "blood_group",
-            "bloodGroup",
-            "patient_blood_group",
-            "patientBloodGroup",
-          ],
-        ) ??
-        _readString(
-          responseBody,
-          [
-            "blood_group",
-            "bloodGroup",
-          ],
-        );
+      bloodRequest,
+      [
+        "blood_group",
+        "bloodGroup",
+        "patient_blood_group",
+        "patientBloodGroup",
+      ],
+    );
 
     final String? city = _readString(
-          bloodRequest,
-          [
-            "city",
-            "current_city",
-            "currentCity",
-            "patient_city",
-            "patientCity",
-          ],
-        ) ??
-        _readString(
-          responseBody,
-          [
-            "patient_city",
-            "patientCity",
-            "city",
-          ],
-        );
+      bloodRequest,
+      [
+        "city",
+        "current_city",
+        "currentCity",
+        "patient_city",
+        "patientCity",
+      ],
+    );
 
     final String? location = _readString(
-          bloodRequest,
-          [
-            "location",
-            "current_location",
-            "currentLocation",
-            "address",
-          ],
-        ) ??
-        _readString(
-          responseBody,
-          [
-            "patient_location",
-            "patientLocation",
-            "location",
-          ],
-        );
+      bloodRequest,
+      [
+        "location",
+        "current_location",
+        "currentLocation",
+        "address",
+        "patient_location",
+        "patientLocation",
+      ],
+    );
 
     final String? hospital = _readString(
       bloodRequest,
@@ -405,91 +368,45 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
         return;
       }
 
-      final queryParameters = <String, String>{
-        'blood_request_id': _bloodRequestId!.trim(),
-        'radius': _serverRadiusValue(),
-        'filter': 'nearby',
-      };
-
-      final uri = Uri.parse('${AuthTokenService.baseUrl}/nearby-options')
-          .replace(queryParameters: queryParameters);
-
-      debugPrint("Nearby Donors API URL: $uri");
-
-      final response = await http
-          .get(
-            uri,
-            headers: {
-              'Accept': 'application/json',
-              'Content-Type': 'application/json',
-              'ngrok-skip-browser-warning': 'true',
-            },
-          )
-          .timeout(const Duration(seconds: 25));
+      final result = await DonationRequestSdk.fetchNearbyDonors(
+        bloodRequestId: _bloodRequestId!.trim(),
+        radiusKm: _radius,
+      );
 
       if (!mounted) return;
 
-      debugPrint("Nearby Donors Status: ${response.statusCode}");
-      debugPrint("Nearby Donors Body: ${response.body}");
+      _setBloodRequestMeta(result.bloodRequest);
+      await _saveLatestActiveBloodRequestId(_bloodRequestId!.trim());
 
-      Map<String, dynamic> responseBody = {};
+      setState(() {
+        _needsBloodRequestForm = false;
+        nearbyDonors = result.donors;
+      });
+    } on SdkException catch (e) {
+      if (!mounted) return;
 
-      try {
-        responseBody = jsonDecode(response.body);
-      } catch (_) {
-        responseBody = {};
-      }
+      if (e.message.toLowerCase().contains('blood request not found') ||
+          e.message.toLowerCase().contains('not pending')) {
+        await _clearLatestActiveBloodRequestId();
 
-      if (response.statusCode == 200 && responseBody["success"] == true) {
-        final dynamic data = responseBody["data"];
-
-        final List donors = data is List
-            ? data
-            : data is Map && data["donors"] is List
-                ? data["donors"]
-                : responseBody["donors"] is List
-                    ? responseBody["donors"]
-                    : [];
-
-        _setBloodRequestMeta(responseBody);
-        await _saveLatestActiveBloodRequestId(_bloodRequestId!.trim());
+        if (!mounted) return;
 
         setState(() {
-          _needsBloodRequestForm = false;
-          nearbyDonors = donors
-              .map<Map<String, dynamic>>(
-                (item) => Map<String, dynamic>.from(item),
-              )
-              .toList();
+          _bloodRequestId = null;
+          _needsBloodRequestForm = true;
+          nearbyDonors = [];
+          _patientBloodGroup = null;
+          _patientCity = null;
+          _patientLocation = null;
+          _hospitalName = null;
         });
-      } else {
-        final String? code = responseBody["code"]?.toString();
 
-        if (response.statusCode == 422 && code == "BLOOD_REQUEST_NOT_ACTIVE") {
-          await _clearLatestActiveBloodRequestId();
-
-          if (!mounted) return;
-
-          setState(() {
-            _bloodRequestId = null;
-            _needsBloodRequestForm = true;
-            nearbyDonors = [];
-            _patientBloodGroup = null;
-            _patientCity = null;
-            _patientLocation = null;
-            _hospitalName = null;
-          });
-
-          return;
-        }
-
-        final errorMessage =
-            responseBody["message"] ?? "Failed to fetch nearby donors.";
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(errorMessage)),
-        );
+        return;
       }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
     } catch (e) {
       if (!mounted) return;
 
@@ -517,43 +434,21 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     }
 
     try {
-      final response = await AuthTokenService.authorizedGet(
-        '/donation-request-history',
+      final list = await DonationRequestSdk.fetchRequestHistory(
+        bloodRequestId: _bloodRequestId,
       );
-
-      debugPrint("Request History Status: ${response.statusCode}");
-      debugPrint("Request History Body: ${response.body}");
-
-      Map<String, dynamic> responseBody = {};
-
-      try {
-        responseBody = jsonDecode(response.body);
-      } catch (_) {
-        responseBody = {};
-      }
 
       if (!mounted) return;
 
-      if (response.statusCode == 200 && responseBody['success'] == true) {
-        final List list =
-            responseBody['data'] is List ? responseBody['data'] : [];
+      setState(() {
+        requestHistory = list;
+      });
+    } on SdkException catch (e) {
+      if (!mounted) return;
 
-        setState(() {
-          requestHistory = list
-              .map<Map<String, dynamic>>(
-                (item) => Map<String, dynamic>.from(item),
-              )
-              .toList();
-        });
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              responseBody['message'] ?? 'Failed to fetch request history.',
-            ),
-          ),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
     } catch (e) {
       if (!mounted) return;
 
@@ -588,18 +483,9 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
   Color _statusColor(String status) {
     final lowerStatus = status.toLowerCase();
 
-    if (lowerStatus == "accepted") {
-      return Colors.green;
-    }
-
-    if (lowerStatus == "pending") {
-      return Colors.orange;
-    }
-
-    if (lowerStatus == "rejected" || lowerStatus == "declined") {
-      return Colors.red;
-    }
-
+    if (lowerStatus == "accepted") return Colors.green;
+    if (lowerStatus == "pending") return Colors.orange;
+    if (lowerStatus == "rejected" || lowerStatus == "declined") return Colors.red;
     if (lowerStatus == "active" || lowerStatus.contains("available")) {
       return Colors.green;
     }
@@ -665,68 +551,51 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     });
 
     try {
-      final response = await AuthTokenService.authorizedPost(
-        '/donation-requests',
-        {
-          'blood_request_id': _bloodRequestId!.trim(),
-          'donor_request_id': donorRequestId,
-          'message': 'Patient needs blood urgently.',
-        },
+      await DonationRequestSdk.sendRequestToDonor(
+        bloodRequestId: _bloodRequestId!.trim(),
+        donorRequestId: donorRequestId,
+        message: 'Patient needs blood urgently.',
       );
 
       if (!mounted) return;
 
-      Map<String, dynamic> responseBody = {};
+      ScaffoldMessenger.of(context).clearSnackBars();
 
-      try {
-        responseBody = jsonDecode(response.body);
-      } catch (_) {
-        responseBody = {};
-      }
+      final Future<void> historyFuture = _fetchRequestHistory(
+        showLoader: false,
+      );
 
-      if (response.statusCode == 201 && responseBody['success'] == true) {
-        ScaffoldMessenger.of(context).clearSnackBars();
+      await _showRequestSuccessCard();
 
-        final Future<void> historyFuture = _fetchRequestHistory(
-          showLoader: false,
-        );
+      await historyFuture;
 
-        await _showRequestSuccessCard();
+      if (!mounted) return;
 
-        await historyFuture;
+      _showHistorySheet();
+    } on SdkException catch (e) {
+      if (!mounted) return;
+
+      if (e.message.toLowerCase().contains('not pending')) {
+        await _clearLatestActiveBloodRequestId();
 
         if (!mounted) return;
 
-        _showHistorySheet();
-      } else {
-        final String message =
-            responseBody['message']?.toString() ?? "Failed to send request.";
+        setState(() {
+          _bloodRequestId = null;
+          _needsBloodRequestForm = true;
+          nearbyDonors = [];
+          _patientBloodGroup = null;
+          _patientCity = null;
+          _patientLocation = null;
+          _hospitalName = null;
+        });
 
-        if (response.statusCode == 422 &&
-            message.toLowerCase().contains('not pending')) {
-          await _clearLatestActiveBloodRequestId();
-
-          if (!mounted) return;
-
-          setState(() {
-            _bloodRequestId = null;
-            _needsBloodRequestForm = true;
-            nearbyDonors = [];
-            _patientBloodGroup = null;
-            _patientCity = null;
-            _patientLocation = null;
-            _hospitalName = null;
-          });
-
-          return;
-        }
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(message),
-          ),
-        );
+        return;
       }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
     } catch (e) {
       if (!mounted) return;
 
@@ -844,7 +713,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     Navigator.pushNamed(context, '/blood_request');
   }
 
-  Widget _buildFillFormCard() {
+ Widget _buildFillFormCard() {
     return Center(
       child: Container(
         width: double.infinity,
@@ -900,7 +769,9 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
               width: double.infinity,
               height: 44,
               child: ElevatedButton(
-                onPressed: _openBloodRequestForm,
+                onPressed: () {
+                  Navigator.pushNamed(context, '/patient-home');
+                },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: primaryMaroon,
                   shape: RoundedRectangleBorder(
@@ -921,7 +792,6 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
       ),
     );
   }
-
   Widget _buildSuccessCard() {
     return FadeTransition(
       opacity: _successFadeAnimation,
@@ -1274,9 +1144,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
   }
 
   String _emptyText() {
-    if (_isInitialLoading) {
-      return "";
-    }
+    if (_isInitialLoading) return "";
 
     if (_bloodRequestId == null || _bloodRequestId!.trim().isEmpty) {
       return "Fill the form to find nearby donors";

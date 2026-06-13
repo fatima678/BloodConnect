@@ -7,7 +7,8 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:blood_donation_app/theme.dart';
-import 'package:blood_donation_app/services/auth_token_service.dart';
+import 'package:blood_donation_app/sdk/core/sdk_exception.dart';
+import 'package:blood_donation_app/sdk/donor/donor_request_sdk.dart';
 
 class BloodDonateScreen extends StatefulWidget {
   static const String routeName = '/blood_donate';
@@ -25,7 +26,8 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _cnicController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
-  final TextEditingController _guardianNameController = TextEditingController();
+  final TextEditingController _guardianNameController =
+      TextEditingController();
   final TextEditingController _guardianPhoneController =
       TextEditingController();
   final TextEditingController _locationController = TextEditingController();
@@ -126,11 +128,10 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
     final DateTime today = DateTime.now();
     final DateTime minimumAllowedDate = _minimumAllowedDonationDate();
 
-    final DateTime initialDate =
-        _lastDonatedDate != null &&
-                !_dateOnly(_lastDonatedDate!).isAfter(minimumAllowedDate)
-            ? _lastDonatedDate!
-            : minimumAllowedDate;
+    final DateTime initialDate = _lastDonatedDate != null &&
+            !_dateOnly(_lastDonatedDate!).isAfter(minimumAllowedDate)
+        ? _lastDonatedDate!
+        : minimumAllowedDate;
 
     final DateTime? picked = await showDatePicker(
       context: context,
@@ -148,7 +149,7 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
     }
   }
 
-  String? _formatDateForApi(DateTime? date) {
+  String? _formatDateForSdk(DateTime? date) {
     if (date == null) {
       return null;
     }
@@ -214,9 +215,8 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
         "&key=$googleMapsApiKey",
       );
 
-      final http.Response response = await http
-          .get(url)
-          .timeout(const Duration(seconds: 12));
+      final http.Response response =
+          await http.get(url).timeout(const Duration(seconds: 12));
 
       if (!mounted) return;
 
@@ -273,9 +273,8 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
         "&key=$googleMapsApiKey",
       );
 
-      final http.Response response = await http
-          .get(url)
-          .timeout(const Duration(seconds: 12));
+      final http.Response response =
+          await http.get(url).timeout(const Duration(seconds: 12));
 
       if (!mounted) return;
 
@@ -365,8 +364,7 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
 
       setState(() {
         _selectedCity = locationData["city"];
-        _locationController.text =
-            locationData["address"] ??
+        _locationController.text = locationData["address"] ??
             "${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}";
       });
     } catch (e) {
@@ -393,9 +391,8 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
         "&key=$googleMapsApiKey",
       );
 
-      final http.Response response = await http
-          .get(url)
-          .timeout(const Duration(seconds: 12));
+      final http.Response response =
+          await http.get(url).timeout(const Duration(seconds: 12));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -462,12 +459,9 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
       _showSuccessCard = false;
     });
 
-   Navigator.pushReplacementNamed(
+    Navigator.pushReplacementNamed(
       context,
       '/donor-home',
-      // arguments: {
-      //   'blood_request_id': bloodRequestId,
-      // },
     );
   }
 
@@ -526,55 +520,45 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
     setState(() => _isSubmitting = true);
 
     try {
-      final http.Response response =
-          await AuthTokenService.authorizedPost('/donor-requests', {
-        "name": _nameController.text.trim(),
-        "cnic": _cnicController.text.trim(),
-        "phone": _phoneController.text.trim(),
-        "guardian_name": _guardianNameController.text.trim(),
-        "guardian_phone": _guardianPhoneController.text.trim(),
-        "blood_group": _selectedBloodGroup,
-        "last_donated_date": _formatDateForApi(_lastDonatedDate),
-        "current_location": _locationController.text.trim(),
-        "city": _selectedCity,
-        "latitude": _latitude,
-        "longitude": _longitude,
+      final String donorRequestId = await DonorRequestSdk.createDonorRequest(
+        name: _nameController.text.trim(),
+        cnic: _cnicController.text.trim(),
+        phone: _phoneController.text.trim(),
+        guardianName: _guardianNameController.text.trim(),
+        guardianPhone: _guardianPhoneController.text.trim(),
+        bloodGroup: _selectedBloodGroup!,
+        lastDonatedDate: _formatDateForSdk(_lastDonatedDate),
+        currentLocation: _locationController.text.trim(),
+        city: _selectedCity!,
+        latitude: _latitude!,
+        longitude: _longitude!,
+        isAvailableNow: true,
+        message: null,
+      );
 
-        // UI se remove hai, backend validation ke liye fixed values send kar rahe hain.
-        "is_available_now": true,
-        "message": null,
-      });
+      debugPrint("Donor request created through SDK ID: $donorRequestId");
 
       if (!mounted) return;
 
-      Map<String, dynamic> responseBody = {};
+      ScaffoldMessenger.of(context).clearSnackBars();
 
-      try {
-        responseBody = jsonDecode(response.body);
-      } catch (_) {
-        responseBody = {};
-      }
+      setState(() => _isSubmitting = false);
 
-      if (response.statusCode == 201 && responseBody["success"] == true) {
-        ScaffoldMessenger.of(context).clearSnackBars();
+      _clearFormFields();
 
-        setState(() => _isSubmitting = false);
+      await _showSuccessAndRedirect();
+    } on SdkException catch (e) {
+      if (!mounted) return;
 
-        _clearFormFields();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
 
-        await _showSuccessAndRedirect();
-      } else {
-        final String errorMessage =
-            responseBody["message"] ?? "Failed to submit donate blood request.";
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(errorMessage)),
-        );
-
-        setState(() => _isSubmitting = false);
-      }
+      setState(() => _isSubmitting = false);
     } catch (e) {
       if (mounted) {
+        debugPrint("Donate blood request unknown error: $e");
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Error: $e")),
         );
@@ -633,15 +617,6 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                // SizedBox(height: 6),
-                // Text(
-                //   "Redirecting to home...",
-                //   textAlign: TextAlign.center,
-                //   style: TextStyle(
-                //     color: Colors.black54,
-                //     fontSize: 13,
-                //   ),
-                // ),
               ],
             ),
           ),
@@ -758,7 +733,6 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
                         color: Color(0xFF6B0000),
                       ),
                     ),
-
                     TextFormField(
                       controller: _nameController,
                       decoration: const InputDecoration(
@@ -767,10 +741,11 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
                         border: OutlineInputBorder(),
                       ),
                       validator: (value) =>
-                          value!.isEmpty ? "Name is required" : null,
+                          value == null || value.trim().isEmpty
+                              ? "Name is required"
+                              : null,
                     ),
                     const SizedBox(height: 16),
-
                     TextFormField(
                       controller: _cnicController,
                       keyboardType: TextInputType.number,
@@ -781,10 +756,11 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
                         border: OutlineInputBorder(),
                       ),
                       validator: (value) =>
-                          value!.isEmpty ? "CNIC is required" : null,
+                          value == null || value.trim().isEmpty
+                              ? "CNIC is required"
+                              : null,
                     ),
                     const SizedBox(height: 16),
-
                     TextFormField(
                       controller: _phoneController,
                       keyboardType: TextInputType.phone,
@@ -794,10 +770,11 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
                         border: OutlineInputBorder(),
                       ),
                       validator: (value) =>
-                          value!.isEmpty ? "Phone number is required" : null,
+                          value == null || value.trim().isEmpty
+                              ? "Phone number is required"
+                              : null,
                     ),
                     const SizedBox(height: 16),
-
                     TextFormField(
                       controller: _guardianNameController,
                       decoration: const InputDecoration(
@@ -806,10 +783,11 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
                         border: OutlineInputBorder(),
                       ),
                       validator: (value) =>
-                          value!.isEmpty ? "Guardian name is required" : null,
+                          value == null || value.trim().isEmpty
+                              ? "Guardian name is required"
+                              : null,
                     ),
                     const SizedBox(height: 16),
-
                     TextFormField(
                       controller: _guardianPhoneController,
                       keyboardType: TextInputType.phone,
@@ -819,10 +797,11 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
                         border: OutlineInputBorder(),
                       ),
                       validator: (value) =>
-                          value!.isEmpty ? "Guardian phone is required" : null,
+                          value == null || value.trim().isEmpty
+                              ? "Guardian phone is required"
+                              : null,
                     ),
                     const SizedBox(height: 16),
-
                     DropdownButtonFormField<String>(
                       value: _selectedBloodGroup,
                       decoration: const InputDecoration(
@@ -838,15 +817,16 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
                             ),
                           )
                           .toList(),
-                      onChanged: (value) =>
-                          setState(() => _selectedBloodGroup = value),
+                      onChanged: disableForm
+                          ? null
+                          : (value) =>
+                              setState(() => _selectedBloodGroup = value),
                       validator: (value) =>
                           value == null ? "Please select blood group" : null,
                     ),
                     const SizedBox(height: 16),
-
                     InkWell(
-                      onTap: _selectLastDonatedDate,
+                      onTap: disableForm ? null : _selectLastDonatedDate,
                       child: InputDecorator(
                         decoration: const InputDecoration(
                           labelText: "Last Donated Date",
@@ -867,7 +847,6 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
                     ),
                     _buildDonationEligibilityNote(),
                     const SizedBox(height: 16),
-
                     TextFormField(
                       controller: _locationController,
                       readOnly: false,
@@ -879,17 +858,18 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
                               ? const SizedBox(
                                   width: 20,
                                   height: 20,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2),
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
                                 )
                               : const Icon(Icons.my_location),
-                          onPressed: _isGettingLocation
+                          onPressed: _isGettingLocation || disableForm
                               ? null
                               : _getCurrentLocation,
                         ),
                         border: const OutlineInputBorder(),
                       ),
-                      onChanged: _searchPlaces,
+                      onChanged: disableForm ? null : _searchPlaces,
                       validator: (value) {
                         if (value == null || value.trim().isEmpty) {
                           return "Location is required";
@@ -902,17 +882,13 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
                         return null;
                       },
                     ),
-
                     if (_isSearchingLocation)
                       const Padding(
                         padding: EdgeInsets.only(top: 8),
                         child: LinearProgressIndicator(),
                       ),
-
                     _buildLocationSuggestions(),
-
                     const SizedBox(height: 40),
-
                     SizedBox(
                       width: double.infinity,
                       height: 56,
@@ -936,6 +912,7 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
                                 style: TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,
+                                  color: Colors.white,
                                 ),
                               ),
                       ),
@@ -945,7 +922,6 @@ class _BloodDonateScreenState extends State<BloodDonateScreen>
               ),
             ),
           ),
-
           if (_showSuccessCard)
             Positioned.fill(
               child: Container(

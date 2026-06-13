@@ -1,10 +1,10 @@
-// lib/screens/consent_form_screen.dart
-
-import 'dart:convert';
+// lib/screens/Donor/Donor_Consent_Form_Screen.dart
 
 import 'package:flutter/material.dart';
+
 import 'package:blood_donation_app/theme.dart';
-import 'package:blood_donation_app/services/auth_token_service.dart';
+import 'package:blood_donation_app/sdk/core/sdk_exception.dart';
+import 'package:blood_donation_app/sdk/donor/donor_donation_request_sdk.dart';
 
 class ConsentFormScreen extends StatefulWidget {
   static const String routeName = '/consent_form';
@@ -77,7 +77,7 @@ class _ConsentFormScreenState extends State<ConsentFormScreen>
       _showSuccessCard = false;
     });
 
-    Navigator.of(context).popUntil((route) => route.isFirst);
+    Navigator.of(context).pop(true);
   }
 
   Future<void> _submitConsent() async {
@@ -108,45 +108,26 @@ class _ConsentFormScreenState extends State<ConsentFormScreen>
     setState(() => _isSubmitting = true);
 
     try {
-      final response = await AuthTokenService.authorizedPost(
-        '/donation-requests/${widget.requestId}/accept',
-        {
-          "consent_data": {
-            "agreed": true,
-            "donor_message": _messageController.text.trim(),
-            "is_willing_to_donate": true,
-            "accepted_terms": true,
-          },
-        },
+      await DonorDonationRequestSdk.acceptConsent(
+        donationRequestId: widget.requestId.trim(),
+        donorMessage: _messageController.text.trim(),
       );
-
-      debugPrint("Consent Accept Status: ${response.statusCode}");
-      debugPrint("Consent Accept Body: ${response.body}");
-
-      Map<String, dynamic> body = {};
-
-      try {
-        body = jsonDecode(response.body);
-      } catch (_) {
-        body = {};
-      }
 
       if (!mounted) return;
 
-      if (response.statusCode == 200 && body['success'] == true) {
-        ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).clearSnackBars();
 
-        setState(() => _isSubmitting = false);
+      setState(() => _isSubmitting = false);
 
-        await _showSuccessAndRedirect();
-        return;
-      }
+      await _showSuccessAndRedirect();
+    } on SdkException catch (e) {
+      if (!mounted) return;
 
       setState(() => _isSubmitting = false);
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(body['message'] ?? "Failed to submit consent."),
+          content: Text(e.message),
           backgroundColor: Colors.red,
         ),
       );
@@ -157,7 +138,7 @@ class _ConsentFormScreenState extends State<ConsentFormScreen>
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("Connection Error: $e"),
+          content: Text("Error: $e"),
           backgroundColor: Colors.red,
         ),
       );
@@ -215,7 +196,7 @@ class _ConsentFormScreenState extends State<ConsentFormScreen>
                 ),
                 SizedBox(height: 6),
                 Text(
-                  "Patient has been notified. Redirecting to home...",
+                  "Patient has been notified.",
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.black54,
@@ -238,9 +219,8 @@ class _ConsentFormScreenState extends State<ConsentFormScreen>
         ? "Patient"
         : widget.patientName.trim();
 
-    final String bloodGroup = widget.bloodGroup.trim().isEmpty
-        ? "Required"
-        : widget.bloodGroup.trim();
+    final String bloodGroup =
+        widget.bloodGroup.trim().isEmpty ? "Required" : widget.bloodGroup.trim();
 
     final String patientLocation = widget.patientLocation.trim().isEmpty
         ? "Location not available"
@@ -272,9 +252,7 @@ class _ConsentFormScreenState extends State<ConsentFormScreen>
                       color: Color(0xFF6B0000),
                     ),
                   ),
-
                   const SizedBox(height: 20),
-
                   const Center(
                     child: Text(
                       "Will you donate blood?",
@@ -285,16 +263,12 @@ class _ConsentFormScreenState extends State<ConsentFormScreen>
                       textAlign: TextAlign.center,
                     ),
                   ),
-
                   const SizedBox(height: 8),
-
                   Text(
                     "Patient Request",
                     style: TextStyle(fontSize: 18, color: Colors.grey[700]),
                   ),
-
                   const SizedBox(height: 16),
-
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(16),
@@ -318,16 +292,12 @@ class _ConsentFormScreenState extends State<ConsentFormScreen>
                       ],
                     ),
                   ),
-
                   const SizedBox(height: 24),
-
                   const Text(
                     "Consent Declaration",
                     style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                   ),
-
                   const SizedBox(height: 12),
-
                   const Text(
                     "I hereby declare that:\n\n"
                     "• I am willingly donating my blood to help the patient.\n"
@@ -337,9 +307,7 @@ class _ConsentFormScreenState extends State<ConsentFormScreen>
                     "• I allow my contact details to be shared with the patient.",
                     style: TextStyle(fontSize: 16, height: 1.7),
                   ),
-
                   const SizedBox(height: 20),
-
                   CheckboxListTile(
                     title: const Text(
                       "I have read and fully agree to the above terms and conditions.",
@@ -354,9 +322,7 @@ class _ConsentFormScreenState extends State<ConsentFormScreen>
                           },
                     controlAffinity: ListTileControlAffinity.leading,
                   ),
-
                   const SizedBox(height: 16),
-
                   TextFormField(
                     controller: _messageController,
                     maxLines: 3,
@@ -366,9 +332,7 @@ class _ConsentFormScreenState extends State<ConsentFormScreen>
                       border: OutlineInputBorder(),
                     ),
                   ),
-
                   const SizedBox(height: 30),
-
                   SizedBox(
                     width: double.infinity,
                     height: 56,
@@ -376,8 +340,7 @@ class _ConsentFormScreenState extends State<ConsentFormScreen>
                       onPressed: disableForm ? null : _submitConsent,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: primaryMaroon,
-                        disabledBackgroundColor:
-                            primaryMaroon.withOpacity(0.65),
+                        disabledBackgroundColor: primaryMaroon.withOpacity(0.65),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
@@ -394,15 +357,12 @@ class _ConsentFormScreenState extends State<ConsentFormScreen>
                             ),
                     ),
                   ),
-
                   const SizedBox(height: 12),
-
                   SizedBox(
                     width: double.infinity,
                     height: 56,
                     child: OutlinedButton(
-                      onPressed:
-                          disableForm ? null : () => Navigator.pop(context),
+                      onPressed: disableForm ? null : () => Navigator.pop(context),
                       style: OutlinedButton.styleFrom(
                         side: BorderSide(color: Colors.grey.shade400),
                         shape: RoundedRectangleBorder(
@@ -419,7 +379,6 @@ class _ConsentFormScreenState extends State<ConsentFormScreen>
               ),
             ),
           ),
-
           if (_showSuccessCard)
             Positioned.fill(
               child: Container(

@@ -8,26 +8,28 @@ import 'screens/role_screen.dart';
 import 'screens/Patient/patient_login_screen.dart';
 import 'screens/Patient/patient_home_screen.dart';
 import 'screens/Patient/patient_register_screen.dart';
-// import 'screens/Patient/Patient_phonelogin_screen.dart';
-// import 'screens/Patient/Patient_otp_screen.dart';
+import 'screens/Patient/Patient_phonelogin_screen.dart';
+import 'screens/Patient/Patient_otp_screen.dart';
 import 'screens/Patient/patient_forget_password.dart';
 import 'screens/Patient/patient_edit_profile.dart';
 import 'screens/Patient/Patient_Profile_Screen.dart';
 import 'screens/Patient/Patient_Notification_Screen.dart';
 import 'screens/Patient/Patient_View_Donate_Screen.dart';
+import 'screens/Patient/patient_verify_email_screen.dart';
 
 // 🩸 DONOR Screens
-import 'screens/splash_screen.dart'; 
+import 'screens/splash_screen.dart';
 import 'screens/Donor/Donor_login_screen.dart';
-import 'screens/Donor/Donor_Home_Screen.dart';
+import 'screens/Donor/donor_home_screen.dart';
 import 'screens/Donor/Donor_Register_Screen.dart';
-// import 'screens/Donor/Donor_phonelogin_screen.dart';
-// import 'screens/Donor/Donor_otp_screen.dart';
+import 'screens/Donor/Donor_phonelogin_screen.dart';
+import 'screens/Donor/Donor_otp_screen.dart';
 import 'screens/Donor/Donor_Forget_Password.dart';
 import 'screens/Donor/Donor_Edit_profile.dart';
 import 'screens/Donor/Donor_Profile_Screen.dart';
-import 'screens/Donor/Donor_Notification_Screen.dart';
+import 'screens/Donor/donor_notification_screen.dart';
 import 'screens/Donor/Donor_Donation_Request_Screen.dart';
+import 'screens/Donor/donor_verify_email_screen.dart';
 
 // 🤝 VOLUNTEER screens
 import 'screens/Volunteer/Volunteer_Dashboard.dart';
@@ -40,16 +42,18 @@ import 'screens/Volunteer/Volunteer_Register.dart';
 import 'screens/Volunteer/Volunteer_Login_Screen.dart';
 import 'screens/Volunteer/contact_admin.dart';
 import 'screens/Volunteer/Volunteer_Notification_Screen.dart';
+import 'screens/Volunteer/volunteer_verify_email_screen.dart';
 
 class AppRoutes {
-  // 🛣️ Universal Route Constants
+  // General Routes
   static const String roleSelection = '/role-selection';
   static const String volunteerRegister = '/volunteer_register';
   static const String volunteerDashboard = '/volunteer_dashboard';
   static const String bloodRequestManagement = '/blood-request-management';
-  static const String volunteerEvetScreen = '/volunteer-events';
   static const String contactAdmin = '/contact-admin';
 
+
+  // Donor Routes
   static const String donorData = '/donor-data';
   // static const String certificateGeneration = '/certificate-generation';
   static const String volunteerProfile = '/volunteer-profile';
@@ -58,11 +62,13 @@ class AppRoutes {
   static const String volunteerContactAdmin = '/volunteer-contact-admin';
   static const String volunteerNotifications = '/volunteer-notifications';
   static const String volunteerEvents = '/volunteer-events';
-  static const String volunteerBloodRequestManagement = '/blood-request-management';
+  static const String volunteerBloodRequestManagement ='/blood-request-management';
   static const String volunteerCertificateGeneration = '/certificate-generation';
-  
+  static const String volunteerLogin = '/volunteer-login';
+  static const String volunteerVerifyEmail = '/volunteer-verify-email';
+  static const String volunteerEvetScreen = '/volunteer-events';
 
-  // 🏥 Patient Specific Named Routes
+  // 🏥 Patient Routes
   static const String patientLogin = '/patient-login';
   static const String patientHome = '/patient-home';
   static const String patientRegister = '/patient-register';
@@ -73,6 +79,7 @@ class AppRoutes {
   static const String patientProfile = '/patient-profile';
   static const String patientNotifications = '/patient-notifications';
   static const String patientViewDonate = '/patient-view-donate';
+  static const String patientVerifyEmail = '/patient-verify-email';
 
   // 🎒 Donor Specific Named Routes
   static const String splash = '/splash';
@@ -86,13 +93,8 @@ class AppRoutes {
   static const String donorProfile = '/donor-profile';
   static const String donorNotifications = '/donor-notifications';
   static const String donorDonationRequests = '/donor-donation-requests';
-  static const String volunteerLogin = '/volunteer-login';
-  // static const String volunteerContactAdmin = '/volunteer-contact-admin'; 
-
+  static const String donorVerifyEmail = '/donor-verify-email';
   
-
-
-
 
   // 🗺️ ROUTE SWITCH ENGINE
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -113,13 +115,15 @@ class AppRoutes {
       case patientRegister:
         return MaterialPageRoute(builder: (_) => const PatientRegisterScreen());
 
-      // case patientPhoneLogin:
-      //   final String role = settings.arguments as String? ?? 'Patient';
-      //   return MaterialPageRoute(builder: (_) => PatientPhoneLoginPage(role: role));
+      case patientPhoneLogin:
+        final String role = settings.arguments as String? ?? 'Patient';
+        return MaterialPageRoute(builder: (_) => PhoneLoginPage(role: role));
 
-      // case patientOtp:
-      //   final String phoneNumber = settings.arguments as String? ?? '';
-      //   return MaterialPageRoute(builder: (_) => PatientOtpScreen(phoneNumber: phoneNumber));
+      case patientOtp:
+        final String phoneNumber = settings.arguments as String? ?? '';
+        return MaterialPageRoute(
+          builder: (_) => PatientOtpScreen(phoneNumber: phoneNumber),
+        );
 
       case patientForgetPassword:
         return MaterialPageRoute(
@@ -139,11 +143,14 @@ class AppRoutes {
       case patientNotifications:
         return MaterialPageRoute(
           builder: (_) => const PatientNotificationsScreen(),
-        ); 
+        );
 
       case patientViewDonate:
+        return MaterialPageRoute(builder: (_) => const ViewDonorsScreen());
+
+      case AppRoutes.patientVerifyEmail:
         return MaterialPageRoute(
-          builder: (_) => const ViewDonorsScreen(),
+          builder: (_) => const PatientVerifyEmailScreen(),
         );
 
       // ==================== DONOR VIEW REDIRECTS ====================
@@ -158,6 +165,10 @@ class AppRoutes {
       case donorRegister:
         return MaterialPageRoute(builder: (_) => const DonorRegisterScreen());
 
+      case AppRoutes.donorVerifyEmail:
+        return MaterialPageRoute(
+          builder: (_) => const DonorVerifyEmailScreen(),
+        );
       // case donorPhoneLogin:
       //   final String role = settings.arguments as String? ?? 'Donor';
       //   return MaterialPageRoute(builder: (_) => DonorPhoneLoginPage(role: role));
@@ -182,16 +193,15 @@ class AppRoutes {
         );
 
       case donorNotifications:
-        return MaterialPageRoute(          
+        return MaterialPageRoute(
           builder: (_) => const DonorNotificationScreen(),
-        );                    
+        );
 
       case donorDonationRequests:
         return MaterialPageRoute(
-          builder: (_) => const DonorDonationRequestScreen(
-          ),
-        );  
-        
+          builder: (_) => const DonorDonationRequestScreen(),
+        );
+
       // ==================== VOLUNTEER VIEW REDIRECTS ====================
 
       case volunteerLogin:
@@ -231,14 +241,10 @@ class AppRoutes {
         );
 
       case volunteerEvents:
-        return MaterialPageRoute(
-          builder: (_) => const VolunteerEvetScreen(),
-        );
+        return MaterialPageRoute(builder: (_) => const VolunteerEvetScreen());
 
       case contactAdmin:
-        return MaterialPageRoute(
-          builder: (_) => const ContactAdmin(),
-        );
+        return MaterialPageRoute(builder: (_) => const ContactAdmin());
 
       case volunteerSettings:
       case helpSupport:

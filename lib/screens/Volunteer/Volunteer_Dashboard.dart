@@ -285,7 +285,7 @@ class _DashboardContentState extends State<DashboardContent> {
                     },
                   ),
                   _buildServiceCard(
-                    title: "Admin Contact",
+                    title: "Contact Admin",
                     icon: Icons.assignment_turned_in_outlined,
                     onTap: () {
                       Navigator.pushNamed(context, '/contact-admin');

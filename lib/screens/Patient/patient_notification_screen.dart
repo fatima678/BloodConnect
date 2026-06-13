@@ -1,10 +1,13 @@
 // lib/screens/notifications_screen.dart
 
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import 'package:blood_donation_app/theme.dart';
-import 'package:blood_donation_app/services/auth_token_service.dart';
+import 'package:blood_donation_app/sdk/core/sdk_exception.dart';
+import 'package:blood_donation_app/sdk/patient/patient_notification_sdk.dart';
 
 class PatientNotificationsScreen extends StatefulWidget {
   static const String routeName = '/notifications';
@@ -44,25 +47,49 @@ class _PatientNotificationsScreenState
       final prefs = await SharedPreferences.getInstance();
       final String? cachedData = prefs.getString(cacheKey);
 
-      if (cachedData != null) {
-        final List decodedList = jsonDecode(cachedData);
-
-        final List<Map<String, dynamic>> cachedNotifications = decodedList
-            .map<Map<String, dynamic>>(
-              (item) => Map<String, dynamic>.from(item),
-            )
-            .where((item) => item['is_read'] != true)
-            .toList();
-
+      if (cachedData == null || cachedData.trim().isEmpty) {
         if (!mounted) return;
 
         setState(() {
-          notifications = cachedNotifications;
           isLoading = false;
         });
+
+        return;
       }
+
+      final decoded = jsonDecode(cachedData);
+
+      if (decoded is! List) {
+        if (!mounted) return;
+
+        setState(() {
+          isLoading = false;
+        });
+
+        return;
+      }
+
+      final List<Map<String, dynamic>> cachedNotifications = decoded
+          .map<Map<String, dynamic>>(
+            (item) => Map<String, dynamic>.from(item),
+          )
+          .where((item) => item['is_read'] != true)
+          .toList();
+
+      if (!mounted) return;
+
+      setState(() {
+        notifications = cachedNotifications;
+        isLoading = false;
+      });
     } catch (e) {
       debugPrint('Error loading patient cached notifications: $e');
+
+      if (!mounted) return;
+
+      setState(() {
+        isLoading = false;
+      });
     }
   }
 
@@ -96,64 +123,51 @@ class _PatientNotificationsScreenState
     }
 
     try {
-      final response = await AuthTokenService.authorizedGet(
-        '/notifications?role=patient&limit=50',
+      final List<Map<String, dynamic>> freshList =
+          await PatientNotificationSdk.fetchPatientNotifications(
+        limit: 50,
       );
 
-      debugPrint('Patient Notifications Status: ${response.statusCode}');
-      debugPrint('Patient Notifications Body: ${response.body}');
-
-      Map<String, dynamic> body = {};
-
-      try {
-        body = jsonDecode(response.body);
-      } catch (_) {
-        body = {};
-      }
+      final List<Map<String, dynamic>> freshNotifications = freshList
+          .where((item) => item['is_read'] != true)
+          .map<Map<String, dynamic>>(
+            (item) => Map<String, dynamic>.from(item),
+          )
+          .toList();
 
       if (!mounted) return;
 
-      if (response.statusCode == 200 && body['success'] == true) {
-        final List list = body['data'] is List ? body['data'] : [];
+      setState(() {
+        notifications = freshNotifications;
+        errorMessage = '';
+        isLoading = false;
+      });
 
-        final List<Map<String, dynamic>> freshNotifications = list
-            .map<Map<String, dynamic>>(
-              (item) => Map<String, dynamic>.from(item),
-            )
-            .where((item) => item['is_read'] != true)
-            .toList();
+      await cacheNotifications(freshNotifications);
+    } on SdkException catch (e) {
+      if (!mounted) return;
 
-        setState(() {
-          notifications = freshNotifications;
-          errorMessage = '';
-          isLoading = false;
-        });
-
-        await cacheNotifications(freshNotifications);
-      } else {
-        setState(() {
-          errorMessage = body['message'] ?? 'Failed to fetch notifications.';
-          isLoading = false;
-        });
-      }
+      setState(() {
+        errorMessage = notifications.isEmpty ? e.message : '';
+        isLoading = false;
+      });
     } catch (e) {
       if (!mounted) return;
 
       setState(() {
-        errorMessage = notifications.isEmpty ? 'Connection Error: $e' : '';
+        errorMessage = notifications.isEmpty ? 'Error: $e' : '';
         isLoading = false;
       });
     }
   }
 
   Future<void> markAsRead(String notificationId) async {
-    if (notificationId.isEmpty) return;
+    if (notificationId.trim().isEmpty) return;
 
     try {
-      await AuthTokenService.authorizedPut(
-        '/notifications/$notificationId/read',
-        {},
-      );
+      await PatientNotificationSdk.markAsRead(notificationId);
+    } on SdkException catch (e) {
+      debugPrint('Mark patient notification read SDK error: ${e.message}');
     } catch (e) {
       debugPrint('Mark patient notification read error: $e');
     }
@@ -162,7 +176,10 @@ class _PatientNotificationsScreenState
   Future<void> markNotificationViewed(
     Map<String, dynamic> item,
   ) async {
-    final String notificationId = item['id']?.toString() ?? '';
+    final String notificationId =
+        item['id']?.toString() ??
+        item['notification_id']?.toString() ??
+        '';
 
     setState(() {
       item['is_read'] = true;
@@ -170,9 +187,11 @@ class _PatientNotificationsScreenState
 
     await cacheNotifications(notifications);
 
-    if (notificationId.isNotEmpty) {
+    if (notificationId.trim().isNotEmpty) {
       await markAsRead(notificationId);
     }
+
+    await _removeReadNotificationsFromLocalView();
   }
 
   Future<void> _removeReadNotificationsFromLocalView() async {

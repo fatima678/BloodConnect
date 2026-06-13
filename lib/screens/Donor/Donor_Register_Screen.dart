@@ -1,89 +1,206 @@
 // lib/screens/register_screen.dart
-import 'dart:convert';
+
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 
 import '../../theme.dart';
 import '../../../routes.dart';
 import 'Donor_login_screen.dart';
+import '../../sdk/auth/auth_sdk.dart';
+import '../../sdk/core/sdk_exception.dart';
 
 class DonorRegisterScreen extends StatefulWidget {
   final String preSelectedRole;
 
-  const DonorRegisterScreen({super.key, this.preSelectedRole = "donor"});
+  const DonorRegisterScreen({
+    super.key,
+    this.preSelectedRole = "donor",
+  });
+
   @override
   State<DonorRegisterScreen> createState() => _DonorRegisterScreenState();
 }
 
 class _DonorRegisterScreenState extends State<DonorRegisterScreen> {
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+
   final TextEditingController nameController = TextEditingController();
   final TextEditingController emailController = TextEditingController();
   final TextEditingController phoneController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
 
   bool isLoading = false;
-  String selectedRole = "donor"; 
+  bool autoValidate = false;
+  bool obscurePassword = true;
 
-  final String registerUrl = "https://manliness-smugness-qualm.ngrok-free.dev/api/register";
+  void showMessage({
+    required String message,
+    Color backgroundColor = Colors.red,
+  }) {
+    if (!mounted) return;
 
-  @override
-  void initState() {
-    super.initState();
-    selectedRole = "donor";
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: backgroundColor,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  String? validateName(String? value) {
+    final String text = value?.trim() ?? '';
+
+    if (text.isEmpty) {
+      return 'Full name is required.';
+    }
+
+    if (text.length < 2) {
+      return 'Full name must be at least 2 characters.';
+    }
+
+    return null;
+  }
+
+  String? validateEmail(String? value) {
+    final String email = value?.trim() ?? '';
+
+    if (email.isEmpty) {
+      return 'Email is required.';
+    }
+
+    final RegExp emailRegex = RegExp(
+      r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$',
+    );
+
+    if (!emailRegex.hasMatch(email)) {
+      return 'Please enter a valid email address.';
+    }
+
+    return null;
+  }
+
+  String? validatePhone(String? value) {
+    final String phone = value?.trim() ?? '';
+
+    if (phone.isEmpty) {
+      return 'Phone number is required.';
+    }
+
+    final String cleanedPhone = phone.replaceAll(RegExp(r'[\s-]'), '');
+
+    final RegExp phoneRegex = RegExp(r'^(03[0-9]{9}|\+923[0-9]{9})$');
+
+    if (!phoneRegex.hasMatch(cleanedPhone)) {
+      return 'Enter valid Pakistani number: 03001234567 or +923001234567.';
+    }
+
+    return null;
+  }
+
+  String? validatePassword(String? value) {
+    final String password = value ?? '';
+
+    if (password.trim().isEmpty) {
+      return 'Password is required.';
+    }
+
+    if (password.length < 6) {
+      return 'Password must be at least 6 characters.';
+    }
+
+    if (password.contains(' ')) {
+      return 'Password should not contain spaces.';
+    }
+
+    return null;
   }
 
   Future<void> registerUser() async {
-    final String name = nameController.text.trim();
-    final String email = emailController.text.trim();
-    final String phone = phoneController.text.trim();
-    final String password = passwordController.text.trim();
+    FocusScope.of(context).unfocus();
 
-    if (name.isEmpty || email.isEmpty || phone.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please fill all fields")),
-      );
+    setState(() {
+      autoValidate = true;
+    });
+
+    if (!_formKey.currentState!.validate()) {
+      showMessage(message: 'Please correct the highlighted fields.');
       return;
     }
+
+    final String name = nameController.text.trim();
+    final String email = emailController.text.trim().toLowerCase();
+    final String phone = phoneController.text.trim().replaceAll(
+          RegExp(r'[\s-]'),
+          '',
+        );
+    final String password = passwordController.text;
 
     try {
       setState(() => isLoading = true);
 
-      final response = await http.post(
-        Uri.parse(registerUrl),
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'ngrok-skip-browser-warning': 'true',
-        },
-        body: jsonEncode({
-          'name': name,
-          'email': email,
-          'phone': phone,
-          'password': password,
-          'role': 'donor',
-        }),
+      await AuthSdk.registerUser(
+        name: name,
+        email: email,
+        phone: phone,
+        password: password,
+        role: 'donor',
       );
 
-      final data = jsonDecode(response.body);
+      final firebaseUser = FirebaseAuth.instance.currentUser;
+
+      if (firebaseUser != null && !firebaseUser.emailVerified) {
+        await firebaseUser.sendEmailVerification();
+      }
+
+      /*
+        FirebaseAuth registration ke baad user automatically logged-in ho jata hai.
+        Email verification send karne ke baad old flow maintain karne ke liye
+        logout karke donor login screen par redirect kar rahe hain.
+      */
+      await AuthSdk.logout();
+
+      if (!mounted) return;
+
       setState(() => isLoading = false);
 
-      if (response.statusCode == 201 && data['success'] == true) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Registration Successful"), backgroundColor: Colors.green),
-        );
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => DonorLoginScreen(role: 'donor')),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(data['message'] ?? "Registration Failed"), backgroundColor: Colors.red),
-        );
-      }
-    } catch (e) {
+      showMessage(
+        message: 'Registration successful. Verification email sent.',
+        backgroundColor: Colors.green,
+      );
+
+      await Future.delayed(const Duration(milliseconds: 900));
+
+      if (!mounted) return;
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => DonorLoginScreen(role: 'donor'),
+        ),
+      );
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+
       setState(() => isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+
+      showMessage(
+        message: e.message ?? 'Failed to send verification email.',
+      );
+    } on SdkException catch (e) {
+      if (!mounted) return;
+
+      setState(() => isLoading = false);
+
+      showMessage(message: e.message);
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() => isLoading = false);
+
+      showMessage(
+        message: 'Registration failed. Please try again.',
       );
     }
   }
@@ -104,6 +221,7 @@ class _DonorRegisterScreenState extends State<DonorRegisterScreen> {
         ),
         child: SafeArea(
           child: SingleChildScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Column(
@@ -111,7 +229,6 @@ class _DonorRegisterScreenState extends State<DonorRegisterScreen> {
                 children: [
                   const SizedBox(height: 20),
 
-                  // Back Button to Role Selection Screen
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Container(
@@ -120,14 +237,20 @@ class _DonorRegisterScreenState extends State<DonorRegisterScreen> {
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: IconButton(
-                        icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),
-                        onPressed: () {
-                          if (Navigator.canPop(context)) {
-                            Navigator.pop(context);
-                          } else {
-                            Navigator.pushReplacementNamed(context, '/'); 
-                          }
-                        },
+                        icon: const Icon(
+                          Icons.arrow_back_ios_new_rounded,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                        onPressed: isLoading
+                            ? null
+                            : () {
+                                if (Navigator.canPop(context)) {
+                                  Navigator.pop(context);
+                                } else {
+                                  Navigator.pushReplacementNamed(context, '/');
+                                }
+                              },
                       ),
                     ),
                   ),
@@ -146,20 +269,25 @@ class _DonorRegisterScreenState extends State<DonorRegisterScreen> {
                   const SizedBox(height: 12),
 
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 10),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 28,
+                      vertical: 10,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.white.withOpacity(0.18),
                       borderRadius: BorderRadius.circular(30),
                     ),
                     child: const Text(
                       "Create New Account",
-                      style: TextStyle(color: Colors.white, fontSize: 16.5),
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16.5,
+                      ),
                     ),
                   ),
 
                   const SizedBox(height: 40),
 
-                  // Toggle Buttons Container
                   Container(
                     decoration: BoxDecoration(
                       color: Colors.white.withOpacity(0.15),
@@ -169,30 +297,42 @@ class _DonorRegisterScreenState extends State<DonorRegisterScreen> {
                       children: [
                         Expanded(
                           child: GestureDetector(
-                            onTap: () => Navigator.pushReplacementNamed(context, AppRoutes.donorLogin),
+                            onTap: isLoading
+                                ? null
+                                : () => Navigator.pushReplacementNamed(
+                                      context,
+                                      AppRoutes.donorLogin,
+                                    ),
                             child: Container(
                               padding: const EdgeInsets.symmetric(vertical: 14),
                               child: const Text(
                                 "Login",
                                 textAlign: TextAlign.center,
-                                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
                               ),
                             ),
                           ),
                         ),
                         Expanded(
-                          child: GestureDetector(
-                            onTap: () {}, 
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              decoration: const BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.horizontal(right: Radius.circular(30)),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            decoration: const BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.horizontal(
+                                right: Radius.circular(30),
                               ),
-                              child: Text(
-                                "Register",
-                                textAlign: TextAlign.center,
-                                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: primaryMaroon),
+                            ),
+                            child: const Text(
+                              "Register",
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: primaryMaroon,
                               ),
                             ),
                           ),
@@ -203,45 +343,106 @@ class _DonorRegisterScreenState extends State<DonorRegisterScreen> {
 
                   const SizedBox(height: 40),
 
-                  // Register Form Card Panel
                   Container(
                     decoration: BoxDecoration(
                       color: whiteColor,
                       borderRadius: BorderRadius.circular(32),
                     ),
                     padding: const EdgeInsets.fromLTRB(24, 36, 24, 40),
-                    child: Column(
-                      children: [
-                        buildField(hint: "Full Name", icon: Icons.person, controller: nameController),
-                        const SizedBox(height: 20),
-
-                        buildField(hint: "Email", icon: Icons.email, controller: emailController),
-                        const SizedBox(height: 20),
-
-                        buildField(hint: "Phone", icon: Icons.phone, controller: phoneController),
-                        const SizedBox(height: 20),
-
-                        buildField(hint: "Password", icon: Icons.lock, controller: passwordController, isPass: true),
-
-                        const SizedBox(height: 35),
-
-                        SizedBox(
-                          width: double.infinity,
-                          height: 55,
-                          child: ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: primaryMaroon,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                            ),
-                            onPressed: isLoading ? null : registerUser,
-                            child: isLoading
-                                ? const CircularProgressIndicator(color: Colors.white)
-                                : const Text("REGISTER AS DONOR", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                    child: Form(
+                      key: _formKey,
+                      autovalidateMode: autoValidate
+                          ? AutovalidateMode.onUserInteraction
+                          : AutovalidateMode.disabled,
+                      child: Column(
+                        children: [
+                          buildField(
+                            hint: "Full Name",
+                            icon: Icons.person,
+                            controller: nameController,
+                            keyboardType: TextInputType.name,
+                            textInputAction: TextInputAction.next,
+                            validator: validateName,
                           ),
-                        ),
-                      ],
+
+                          const SizedBox(height: 20),
+
+                          buildField(
+                            hint: "Email",
+                            icon: Icons.email,
+                            controller: emailController,
+                            keyboardType: TextInputType.emailAddress,
+                            textInputAction: TextInputAction.next,
+                            validator: validateEmail,
+                          ),
+
+                          const SizedBox(height: 20),
+
+                          buildField(
+                            hint: "Phone",
+                            icon: Icons.phone,
+                            controller: phoneController,
+                            keyboardType: TextInputType.phone,
+                            textInputAction: TextInputAction.next,
+                            validator: validatePhone,
+                          ),
+
+                          const SizedBox(height: 20),
+
+                          buildField(
+                            hint: "Password",
+                            icon: Icons.lock,
+                            controller: passwordController,
+                            isPass: true,
+                            keyboardType: TextInputType.visiblePassword,
+                            textInputAction: TextInputAction.done,
+                            validator: validatePassword,
+                            onFieldSubmitted: (_) {
+                              if (!isLoading) {
+                                registerUser();
+                              }
+                            },
+                          ),
+
+                          const SizedBox(height: 35),
+
+                          SizedBox(
+                            width: double.infinity,
+                            height: 55,
+                            child: ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: primaryMaroon,
+                                disabledBackgroundColor:
+                                    primaryMaroon.withOpacity(0.65),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(15),
+                                ),
+                              ),
+                              onPressed: isLoading ? null : registerUser,
+                              child: isLoading
+                                  ? const SizedBox(
+                                      width: 24,
+                                      height: 24,
+                                      child: CircularProgressIndicator(
+                                        color: Colors.white,
+                                        strokeWidth: 2.5,
+                                      ),
+                                    )
+                                  : const Text(
+                                      "REGISTER AS DONOR",
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
+
                   const SizedBox(height: 30),
                 ],
               ),
@@ -256,21 +457,73 @@ class _DonorRegisterScreenState extends State<DonorRegisterScreen> {
     required String hint,
     required IconData icon,
     required TextEditingController controller,
+    required String? Function(String?) validator,
     bool isPass = false,
+    TextInputType keyboardType = TextInputType.text,
+    TextInputAction textInputAction = TextInputAction.next,
+    void Function(String)? onFieldSubmitted,
   }) {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFFF1F3F6),
-        borderRadius: BorderRadius.circular(15),
-      ),
-      child: TextField(
-        controller: controller,
-        obscureText: isPass,
-        decoration: InputDecoration(
-          prefixIcon: Icon(icon, color: primaryMaroon),
-          hintText: hint,
-          border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+    return TextFormField(
+      controller: controller,
+      obscureText: isPass ? obscurePassword : false,
+      keyboardType: keyboardType,
+      textInputAction: textInputAction,
+      validator: validator,
+      enabled: !isLoading,
+      onFieldSubmitted: onFieldSubmitted,
+      decoration: InputDecoration(
+        filled: true,
+        fillColor: const Color(0xFFF1F3F6),
+        prefixIcon: Icon(icon, color: primaryMaroon),
+        suffixIcon: isPass
+            ? IconButton(
+                icon: Icon(
+                  obscurePassword ? Icons.visibility_off : Icons.visibility,
+                  color: primaryMaroon,
+                ),
+                onPressed: isLoading
+                    ? null
+                    : () {
+                        setState(() {
+                          obscurePassword = !obscurePassword;
+                        });
+                      },
+              )
+            : null,
+        hintText: hint,
+        errorMaxLines: 2,
+        border: OutlineInputBorder(
+          borderSide: BorderSide.none,
+          borderRadius: BorderRadius.circular(15),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderSide: BorderSide.none,
+          borderRadius: BorderRadius.circular(15),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(15),
+          borderSide: const BorderSide(
+            color: primaryMaroon,
+            width: 1.2,
+          ),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(15),
+          borderSide: const BorderSide(
+            color: Colors.red,
+            width: 1.1,
+          ),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(15),
+          borderSide: const BorderSide(
+            color: Colors.red,
+            width: 1.2,
+          ),
+        ),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 20,
+          vertical: 18,
         ),
       ),
     );

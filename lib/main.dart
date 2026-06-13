@@ -5,6 +5,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'theme.dart';
 import 'routes.dart';
 import 'services/app_notification_service.dart';
+import 'services/firestore_notification_listener_service.dart';
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -15,6 +16,12 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     debugPrint('Title: ${message.notification?.title}');
     debugPrint('Body: ${message.notification?.body}');
     debugPrint('Data: ${message.data}');
+
+    await AppNotificationService.initializeForBackground();
+
+    if (message.notification == null) {
+      await AppNotificationService.showNotification(message);
+    }
   } catch (e) {
     debugPrint('Background FCM handler error: $e');
   }
@@ -31,6 +38,9 @@ Future<void> main() async {
 
     await AppNotificationService.initialize();
     debugPrint('Notification service initialized successfully.');
+
+    FirestoreNotificationListenerService.start();
+    debugPrint('Firestore notification listener started.');
   } catch (e) {
     debugPrint('Firebase/Notification initialization failed: $e');
   }

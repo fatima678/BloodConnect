@@ -1,8 +1,10 @@
 // lib/screens/blood_bank_screen.dart
-import 'dart:convert';
+
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+
 import '../../theme.dart';
+import '../../sdk/core/sdk_exception.dart';
+import '../../sdk/donor/donor_blood_bank_sdk.dart';
 import './Donor_Blood_Bank_Map_Screen.dart';
 
 class BloodBankScreen extends StatefulWidget {
@@ -24,12 +26,11 @@ class BloodBankScreen extends StatefulWidget {
 }
 
 class _BloodBankScreenState extends State<BloodBankScreen> {
-  List<dynamic> bloodBanks = [];
-  bool isLoading = true;
-  String errorMessage = '';
+  List<Map<String, dynamic>> bloodBanks = [];
 
-  final String apiUrl =
-      "https://manliness-smugness-qualm.ngrok-free.dev/api/blood-banks";
+  bool isLoading = true;
+  bool isRefreshing = false;
+  String errorMessage = '';
 
   @override
   void initState() {
@@ -37,55 +38,342 @@ class _BloodBankScreenState extends State<BloodBankScreen> {
     fetchBloodBanks();
   }
 
-  Future<void> fetchBloodBanks() async {
+  Future<void> fetchBloodBanks({bool showLoader = true}) async {
     try {
-      setState(() {
-        isLoading = true;
-        errorMessage = '';
-      });
-
-      final uri = Uri.parse(apiUrl).replace(queryParameters: {
-        if (widget.requestId != null) 'request_id': widget.requestId!,
-        if (widget.lat != null) 'lat': widget.lat.toString(),
-        if (widget.lng != null) 'lng': widget.lng.toString(),
-        'radius': '30',
-        'limit': '50',
-      });
-
-      final response = await http.get(
-        uri,
-        headers: {
-          'Accept': 'application/json',
-          'ngrok-skip-browser-warning': 'true',
-        },
-      );
-
-      if (response.statusCode == 200) {
-        final Map<String, dynamic> data = jsonDecode(response.body);
-
-        if (data['success'] == true) {
-          setState(() {
-            bloodBanks = data['data'] ?? [];
-            isLoading = false;
-          });
-        } else {
-          setState(() {
-            errorMessage = data['message'] ?? "Failed to fetch blood banks";
-            isLoading = false;
-          });
-        }
+      if (showLoader) {
+        setState(() {
+          isLoading = bloodBanks.isEmpty;
+          isRefreshing = true;
+          errorMessage = '';
+        });
       } else {
         setState(() {
-          errorMessage = "Server Error: ${response.statusCode}";
-          isLoading = false;
+          isRefreshing = true;
+          errorMessage = '';
         });
       }
-    } catch (e) {
+
+      final banks = await DonorBloodBankSdk.fetchBloodBanks(
+        limit: 100,
+      );
+
+      if (!mounted) return;
+
       setState(() {
-        errorMessage = "Connection Error: $e";
+        bloodBanks = banks;
         isLoading = false;
+        isRefreshing = false;
+        errorMessage = '';
+      });
+    } on SdkException catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        errorMessage = e.message;
+        isLoading = false;
+        isRefreshing = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        errorMessage = 'Failed to fetch blood banks.';
+        isLoading = false;
+        isRefreshing = false;
       });
     }
+  }
+
+  String _readString(Map<String, dynamic> data, List<String> keys) {
+    for (final key in keys) {
+      final value = data[key];
+
+      if (value == null) continue;
+
+      final text = value.toString().trim();
+
+      if (text.isNotEmpty && text.toLowerCase() != 'null') {
+        return text;
+      }
+    }
+
+    return '';
+  }
+
+  double? _readDouble(Map<String, dynamic> data, List<String> keys) {
+    for (final key in keys) {
+      final value = data[key];
+
+      if (value == null) continue;
+
+      if (value is num) {
+        return value.toDouble();
+      }
+
+      final parsed = double.tryParse(value.toString().trim());
+
+      if (parsed != null) {
+        return parsed;
+      }
+    }
+
+    return null;
+  }
+
+  Widget buildEmptyState() {
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.all(22),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.local_hospital_outlined,
+              size: 80,
+              color: Colors.grey,
+            ),
+            SizedBox(height: 14),
+            Text(
+              'No blood banks found',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+                color: Colors.black54,
+              ),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'No active blood banks are available right now.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.black45,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget buildErrorState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              errorMessage,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.red,
+                fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: () => fetchBloodBanks(),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: primaryMaroon,
+              ),
+              child: const Text(
+                'Retry',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget buildBloodBankCard(Map<String, dynamic> bank) {
+    final hospitalName = _readString(bank, [
+      'hospital_name',
+      'name',
+      'bank_name',
+    ]);
+
+    final address = _readString(bank, [
+      'address',
+      'location',
+    ]);
+
+    final phoneNumber = _readString(bank, [
+      'phone_number',
+      'phone',
+      'contact',
+    ]);
+
+    final status = _readString(bank, [
+      'status',
+    ]);
+
+    final latitude = _readDouble(bank, [
+      'latitude',
+      'lat',
+    ]);
+
+    final longitude = _readDouble(bank, [
+      'longitude',
+      'lng',
+      'long',
+    ]);
+
+    final bool hasMapLocation = latitude != null && longitude != null;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 14),
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              hospitalName.isNotEmpty ? hospitalName : 'Unknown Hospital',
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFFB71C1C),
+              ),
+            ),
+
+            const SizedBox(height: 6),
+
+            Text(
+              address.isNotEmpty ? address : 'No address available',
+              style: TextStyle(
+                color: Colors.grey[600],
+                fontSize: 13,
+              ),
+            ),
+
+            if (phoneNumber.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Phone: $phoneNumber',
+                style: const TextStyle(
+                  color: Colors.black54,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+
+            if (status.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Status: ${status[0].toUpperCase()}${status.substring(1)}',
+                style: TextStyle(
+                  color: status.toLowerCase() == 'active'
+                      ? Colors.green
+                      : Colors.orange,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+
+            const SizedBox(height: 12),
+
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor:
+                          hasMapLocation ? primaryMaroon : Colors.grey,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                    ),
+                    onPressed: hasMapLocation
+                        ? () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    DonorBloodBankMapScreen(
+                                  selectedBank: {
+                                    'name': hospitalName.isNotEmpty
+                                        ? hospitalName
+                                        : 'Unknown Hospital',
+                                    'location': address,
+                                    'lat': latitude,
+                                    'lng': longitude,
+                                  },
+                                ),
+                              ),
+                            );
+                          }
+                        : null,
+                    child: const Text(
+                      'VIEW ON MAP',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget buildBloodBanksList() {
+    return RefreshIndicator(
+      onRefresh: () => fetchBloodBanks(showLoader: false),
+      child: ListView.builder(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        itemCount: bloodBanks.length,
+        itemBuilder: (context, index) {
+          final bank = bloodBanks[index];
+
+          return buildBloodBankCard(bank);
+        },
+      ),
+    );
+  }
+
+  Widget buildMainContent() {
+    if (errorMessage.isNotEmpty) {
+      return buildErrorState();
+    }
+
+    return Column(
+      children: [
+        if (isRefreshing && bloodBanks.isNotEmpty)
+          const LinearProgressIndicator(minHeight: 2),
+
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '${bloodBanks.length} blood banks found',
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+              ),
+            ),
+          ),
+        ),
+
+        Expanded(
+          child: bloodBanks.isEmpty ? buildEmptyState() : buildBloodBanksList(),
+        ),
+      ],
+    );
   }
 
   @override
@@ -100,124 +388,21 @@ class _BloodBankScreenState extends State<BloodBankScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         title: const Text(
-          "Nearby Blood Banks",
+          'Blood Banks',
           style: TextStyle(color: Colors.white, fontSize: 18),
         ),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh, color: Colors.white),
-            onPressed: fetchBloodBanks,
+            onPressed: () => fetchBloodBanks(showLoader: false),
           ),
         ],
       ),
       body: isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : errorMessage.isNotEmpty
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(errorMessage, textAlign: TextAlign.center),
-                        const SizedBox(height: 20),
-                        ElevatedButton(
-                          onPressed: fetchBloodBanks,
-                          child: const Text("Retry"),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              : bloodBanks.isEmpty
-                  ? const Center(
-                      child: Text("No nearby blood banks found"),
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: bloodBanks.length,
-                      itemBuilder: (context, index) {
-                        final bank = bloodBanks[index];
-
-                        return Card(
-                          margin: const EdgeInsets.only(bottom: 14),
-                          elevation: 2,
-                          child: Padding(
-                            padding: const EdgeInsets.all(14),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  bank['hospital_name'] ?? 'Unknown Hospital',
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    color: Color(0xFFB71C1C),
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-
-                                Text(
-                                  bank['address'] ??
-                                      bank['location'] ??
-                                      'No address available',
-                                  style: TextStyle(
-                                    color: Colors.grey[600],
-                                    fontSize: 13,
-                                  ),
-                                ),
-
-                                const SizedBox(height: 6),
-
-                                if (bank['distance_km'] != null)
-                                  Text(
-                                    "${bank['distance_km']} km away",
-                                    style: const TextStyle(
-                                      color: Colors.green,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-
-                                const SizedBox(height: 12),
-
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: ElevatedButton(
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: primaryMaroon,
-                                        ),
-                                        onPressed: () {
-                                          Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (context) =>
-                                                  DonorBloodBankMapScreen(
-                                                selectedBank: {
-                                                  'name': bank['hospital_name'],
-                                                  'location': bank['address'] ??
-                                                      bank['location'],
-                                                  'lat': bank['latitude'],
-                                                  'lng': bank['longitude'],
-                                                },
-                                              ),
-                                            ),
-                                          );
-                                        },
-                                        child: const Text(
-                                          "VIEW ON MAP",
-                                          style: TextStyle(fontSize: 12),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+          ? const Center(
+              child: CircularProgressIndicator(color: primaryMaroon),
+            )
+          : buildMainContent(),
     );
   }
 }

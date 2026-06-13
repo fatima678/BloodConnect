@@ -1,11 +1,11 @@
 // lib/screens/Patient/ViewDonorsScreen.dart
 
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:blood_donation_app/theme.dart';
-import 'package:blood_donation_app/services/auth_token_service.dart';
 import 'package:flutter_phone_direct_caller/flutter_phone_direct_caller.dart';
+
+import 'package:blood_donation_app/sdk/core/sdk_exception.dart';
+import 'package:blood_donation_app/sdk/patient/patient_view_donors_sdk.dart';
 
 class ViewDonorsScreen extends StatefulWidget {
   static const String routeName = '/view-donors';
@@ -34,53 +34,28 @@ class _ViewDonorsScreenState extends State<ViewDonorsScreen> {
     });
 
     try {
-      final response = await AuthTokenService.authorizedGet(
-        '/donation-request-history',
-      );
-
-      debugPrint('View Donors Status: ${response.statusCode}');
-      debugPrint('View Donors Body: ${response.body}');
-
-      Map<String, dynamic> body = {};
-
-      try {
-        body = jsonDecode(response.body);
-      } catch (_) {
-        body = {};
-      }
+      final List<Map<String, dynamic>> donors =
+          await PatientViewDonorsSdk.fetchAcceptedDonors();
 
       if (!mounted) return;
 
-      if (response.statusCode == 200 && body['success'] == true) {
-        final List list = body['data'] is List ? body['data'] : [];
+      setState(() {
+        acceptedDonors = donors;
+        isLoading = false;
+        errorMessage = '';
+      });
+    } on SdkException catch (e) {
+      if (!mounted) return;
 
-        final filtered = list
-            .map<Map<String, dynamic>>(
-              (item) => Map<String, dynamic>.from(item),
-            )
-            .where((item) {
-          final status = item['status']?.toString().toLowerCase() ?? '';
-          final phoneVisible = item['phone_visible_to_patient'] == true;
-          final phone = item['donor_phone']?.toString().trim() ?? '';
-
-          return status == 'accepted' && phoneVisible && phone.isNotEmpty;
-        }).toList();
-
-        setState(() {
-          acceptedDonors = filtered;
-          isLoading = false;
-        });
-      } else {
-        setState(() {
-          errorMessage = body['message'] ?? 'Failed to fetch donor details.';
-          isLoading = false;
-        });
-      }
+      setState(() {
+        errorMessage = e.message;
+        isLoading = false;
+      });
     } catch (e) {
       if (!mounted) return;
 
       setState(() {
-        errorMessage = 'Connection Error: $e';
+        errorMessage = 'Error: $e';
         isLoading = false;
       });
     }
@@ -123,8 +98,11 @@ class _ViewDonorsScreenState extends State<ViewDonorsScreen> {
     }
   }
 
-  String getValue(Map<String, dynamic> item, List<String> keys,
-      {String fallback = 'N/A'}) {
+  String getValue(
+    Map<String, dynamic> item,
+    List<String> keys, {
+    String fallback = 'N/A',
+  }) {
     for (final key in keys) {
       final value = item[key];
 
@@ -216,7 +194,7 @@ class _ViewDonorsScreenState extends State<ViewDonorsScreen> {
 
     final message = getValue(
       item,
-      ['message'],
+      ['donor_message', 'message'],
       fallback: 'Your blood request has been accepted.',
     );
 
@@ -251,10 +229,10 @@ class _ViewDonorsScreenState extends State<ViewDonorsScreen> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                Expanded(
+                const Expanded(
                   child: Text(
                     'Donation Request Accepted',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.bold,
                       color: Colors.black87,
@@ -270,9 +248,7 @@ class _ViewDonorsScreenState extends State<ViewDonorsScreen> {
                 ),
               ],
             ),
-
             const SizedBox(height: 8),
-
             Text(
               '$donorName accepted your blood request. You can call this donor now.',
               style: const TextStyle(
@@ -280,9 +256,7 @@ class _ViewDonorsScreenState extends State<ViewDonorsScreen> {
                 color: Colors.black54,
               ),
             ),
-
             const SizedBox(height: 12),
-
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(12),
@@ -315,9 +289,7 @@ class _ViewDonorsScreenState extends State<ViewDonorsScreen> {
                 ],
               ),
             ),
-
             const SizedBox(height: 12),
-
             SizedBox(
               width: double.infinity,
               height: 45,

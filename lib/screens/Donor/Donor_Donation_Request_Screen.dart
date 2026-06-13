@@ -1,11 +1,11 @@
 // lib/screens/Donor/DonorDonationRequestScreen.dart
 
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
+
 import 'package:blood_donation_app/theme.dart';
-import 'package:blood_donation_app/services/auth_token_service.dart';
 import 'package:blood_donation_app/screens/Donor/Donor_Consent_Form_Screen.dart';
+import 'package:blood_donation_app/sdk/core/sdk_exception.dart';
+import 'package:blood_donation_app/sdk/donor/donor_donation_request_sdk.dart';
 
 class DonorDonationRequestScreen extends StatefulWidget {
   static const String routeName = '/donor-donation-requests-screen';
@@ -36,54 +36,39 @@ class _DonorDonationRequestScreenState
     });
 
     try {
-      final response = await AuthTokenService.authorizedGet(
-        '/donor-donation-requests',
-      );
-
-      debugPrint('Donor Blood Requests Status: ${response.statusCode}');
-      debugPrint('Donor Blood Requests Body: ${response.body}');
-
-      Map<String, dynamic> body = {};
-
-      try {
-        body = jsonDecode(response.body);
-      } catch (_) {
-        body = {};
-      }
+      final List<Map<String, dynamic>> list =
+          await DonorDonationRequestSdk.fetchIncomingRequests();
 
       if (!mounted) return;
 
-      if (response.statusCode == 200 && body['success'] == true) {
-        final List list = body['data'] is List ? body['data'] : [];
+      setState(() {
+        requests = list;
+        isLoading = false;
+        errorMessage = '';
+      });
+    } on SdkException catch (e) {
+      if (!mounted) return;
 
-        setState(() {
-          requests = list
-              .map<Map<String, dynamic>>(
-                (item) => Map<String, dynamic>.from(item),
-              )
-              .toList();
-          isLoading = false;
-        });
-      } else {
-        setState(() {
-          errorMessage = body['message'] ?? 'Failed to fetch blood requests.';
-          isLoading = false;
-        });
-      }
+      setState(() {
+        errorMessage = e.message;
+        isLoading = false;
+      });
     } catch (e) {
       if (!mounted) return;
 
       setState(() {
-        errorMessage = 'Connection Error: $e';
+        errorMessage = 'Error: $e';
         isLoading = false;
       });
     }
   }
 
   Future<void> rejectRequest(Map<String, dynamic> item) async {
-    final String requestId = item['id']?.toString() ?? '';
+    final String requestId = item['id']?.toString() ??
+        item['donation_request_id']?.toString() ??
+        '';
 
-    if (requestId.isEmpty) {
+    if (requestId.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Donation request ID missing.'),
@@ -94,43 +79,27 @@ class _DonorDonationRequestScreenState
     }
 
     try {
-      final response = await AuthTokenService.authorizedPost(
-        '/donation-requests/$requestId/reject',
-        {
-          'reason': 'Donor cannot donate blood right now.',
-        },
+      await DonorDonationRequestSdk.rejectRequest(
+        donationRequestId: requestId,
+        reason: 'Donor cannot donate blood right now.',
       );
-
-      debugPrint('Reject Request Status: ${response.statusCode}');
-      debugPrint('Reject Request Body: ${response.body}');
-
-      Map<String, dynamic> body = {};
-
-      try {
-        body = jsonDecode(response.body);
-      } catch (_) {
-        body = {};
-      }
 
       if (!mounted) return;
 
-      if (response.statusCode == 200 && body['success'] == true) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              body['message'] ?? 'Request rejected successfully.',
-            ),
-            backgroundColor: Colors.green,
-          ),
-        );
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Request rejected successfully.'),
+          backgroundColor: Colors.green,
+        ),
+      );
 
-        await fetchBloodRequests();
-        return;
-      }
+      await fetchBloodRequests();
+    } on SdkException catch (e) {
+      if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(body['message'] ?? 'Failed to reject request.'),
+          content: Text(e.message),
           backgroundColor: Colors.red,
         ),
       );
@@ -139,7 +108,7 @@ class _DonorDonationRequestScreenState
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Connection Error: $e'),
+          content: Text('Error: $e'),
           backgroundColor: Colors.red,
         ),
       );
@@ -147,9 +116,11 @@ class _DonorDonationRequestScreenState
   }
 
   Future<void> openConsentForm(Map<String, dynamic> item) async {
-    final String requestId = item['id']?.toString() ?? '';
+    final String requestId = item['id']?.toString() ??
+        item['donation_request_id']?.toString() ??
+        '';
 
-    if (requestId.isEmpty) {
+    if (requestId.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Donation request ID missing.'),
@@ -335,14 +306,11 @@ class _DonorDonationRequestScreenState
                 ),
               ],
             ),
-
             const SizedBox(height: 10),
-
             infoRow('Location', location),
             infoRow('Phone', phone),
             infoRow('Message', message),
             infoRow('Time', formatTime(item['created_at'])),
-
             if (rejectReason.trim().isNotEmpty) ...[
               const SizedBox(height: 8),
               Text(
@@ -354,9 +322,7 @@ class _DonorDonationRequestScreenState
                 ),
               ),
             ],
-
             const SizedBox(height: 14),
-
             if (isPending)
               Row(
                 children: [

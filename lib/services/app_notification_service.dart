@@ -6,6 +6,8 @@ class AppNotificationService {
   static final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
 
+  static bool _isLocalInitialized = false;
+
   static const AndroidNotificationChannel _channel =
       AndroidNotificationChannel(
     'blood_requests_channel',
@@ -17,32 +19,17 @@ class AppNotificationService {
   );
 
   static Future<void> initialize() async {
-    const AndroidInitializationSettings androidSettings =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
+    await _initializeLocalNotifications();
 
-    const InitializationSettings initSettings = InitializationSettings(
-      android: androidSettings,
-    );
+    await _requestNotificationPermissions();
 
-    await _localNotifications.initialize(
-      settings: initSettings,
-      onDidReceiveNotificationResponse: (NotificationResponse response) {
-        debugPrint('Notification clicked payload: ${response.payload}');
-      },
-    );
+    await FirebaseMessaging.instance.setAutoInitEnabled(true);
 
-    await _localNotifications
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(_channel);
-
-    await FirebaseMessaging.instance.requestPermission(
+    await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
       alert: true,
       badge: true,
       sound: true,
     );
-
-    await FirebaseMessaging.instance.setAutoInitEnabled(true);
 
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       debugPrint('FOREGROUND FCM RECEIVED');
@@ -67,16 +54,76 @@ class AppNotificationService {
     }
   }
 
+  static Future<void> initializeForBackground() async {
+    await _initializeLocalNotifications();
+  }
+
+  static Future<void> _initializeLocalNotifications() async {
+    if (_isLocalInitialized) return;
+
+    const AndroidInitializationSettings androidSettings =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+
+    const InitializationSettings initSettings = InitializationSettings(
+      android: androidSettings,
+    );
+
+    await _localNotifications.initialize(
+      settings: initSettings,
+      onDidReceiveNotificationResponse: (NotificationResponse response) {
+        debugPrint('Notification clicked payload: ${response.payload}');
+      },
+    );
+
+    final AndroidFlutterLocalNotificationsPlugin? androidPlugin =
+        _localNotifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+
+    await androidPlugin?.createNotificationChannel(_channel);
+
+    _isLocalInitialized = true;
+  }
+
+  static Future<void> _requestNotificationPermissions() async {
+    await FirebaseMessaging.instance.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+
+    final AndroidFlutterLocalNotificationsPlugin? androidPlugin =
+        _localNotifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+
+    await androidPlugin?.requestNotificationsPermission();
+  }
+
   static Future<void> showNotification(RemoteMessage message) async {
     final String title =
         message.notification?.title?.toString() ??
-        message.data['title']?.toString() ??
-        'Notification';
+            message.data['title']?.toString() ??
+            message.data['notification_title']?.toString() ??
+            'Blood Connect';
 
     final String body =
         message.notification?.body?.toString() ??
-        message.data['body']?.toString() ??
-        '';
+            message.data['body']?.toString() ??
+            message.data['message']?.toString() ??
+            '';
+
+    await showLocalNotification(
+      title: title,
+      body: body,
+      payload: message.data.toString(),
+    );
+  }
+
+  static Future<void> showLocalNotification({
+    required String title,
+    required String body,
+    String? payload,
+  }) async {
+    await _initializeLocalNotifications();
 
     const AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
@@ -88,6 +135,7 @@ class AppNotificationService {
       playSound: true,
       enableVibration: true,
       channelShowBadge: true,
+      icon: '@mipmap/ic_launcher',
     );
 
     const NotificationDetails details = NotificationDetails(
@@ -99,7 +147,7 @@ class AppNotificationService {
       title: title,
       body: body,
       notificationDetails: details,
-      payload: message.data.toString(),
+      payload: payload,
     );
   }
 }

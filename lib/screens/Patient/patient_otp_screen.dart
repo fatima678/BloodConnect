@@ -1,10 +1,21 @@
 import 'package:flutter/material.dart';
+
 import '../../theme.dart';
-import '../../../routes.dart'; 
+import '../../../routes.dart';
+import '../../sdk/auth/phone_otp_sdk.dart';
+import '../../sdk/core/sdk_exception.dart';
 
 class OtpScreen extends StatefulWidget {
   final String phoneNumber;
-  const OtpScreen({super.key, required this.phoneNumber});
+  final String verificationId;
+  final int? resendToken;
+
+  const OtpScreen({
+    super.key,
+    required this.phoneNumber,
+    required this.verificationId,
+    this.resendToken,
+  });
 
   @override
   State<OtpScreen> createState() => _OtpScreenState();
@@ -15,21 +26,154 @@ class _OtpScreenState extends State<OtpScreen> {
     6,
     (index) => TextEditingController(),
   );
-  final List<FocusNode> _focusNodes = List.generate(6, (index) => FocusNode());
+
+  final List<FocusNode> _focusNodes = List.generate(
+    6,
+    (index) => FocusNode(),
+  );
+
+  bool _isLoading = false;
+  bool _isResending = false;
+
+  late String _verificationId;
+  int? _resendToken;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _verificationId = widget.verificationId;
+    _resendToken = widget.resendToken;
+  }
+
+  String _otpCode() {
+    return _controllers.map((controller) => controller.text.trim()).join();
+  }
+
+  void _showMessage({
+    required String message,
+    Color backgroundColor = Colors.red,
+  }) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: backgroundColor,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<void> _verifyOtp() async {
+    final otp = _otpCode();
+
+    if (otp.length != 6) {
+      _showMessage(message: 'Please enter complete 6 digit OTP.');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      await PhoneOtpSdk.verifyOtp(
+        verificationId: _verificationId,
+        otp: otp,
+      );
+
+      if (!mounted) return;
+
+      _showMessage(
+        message: 'Phone number verified successfully.',
+        backgroundColor: Colors.green,
+      );
+
+      await Future.delayed(const Duration(milliseconds: 400));
+
+      if (!mounted) return;
+
+      AppRoutes.replaceWithPatientHome(context);
+    } on SdkException catch (e) {
+      _showMessage(message: e.message);
+    } catch (e) {
+      _showMessage(message: 'OTP verification failed. Please try again.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _resendOtp() async {
+    if (_isResending) return;
+
+    setState(() {
+      _isResending = true;
+    });
+
+    try {
+      await PhoneOtpSdk.sendOtp(
+        phone: widget.phoneNumber,
+        forceResendingToken: _resendToken,
+        onCodeSent: (verificationId, resendToken) {
+          _verificationId = verificationId;
+          _resendToken = resendToken;
+
+          _showMessage(
+            message: 'OTP resent successfully.',
+            backgroundColor: Colors.green,
+          );
+        },
+        onFailed: (message) {
+          _showMessage(message: message);
+        },
+        onAutoVerified: (credential) async {
+          try {
+            await PhoneOtpSdk.signInWithCredential(credential);
+
+            if (!mounted) return;
+
+            AppRoutes.replaceWithPatientHome(context);
+          } catch (e) {
+            _showMessage(message: 'Auto verification failed.');
+          }
+        },
+      );
+    } on SdkException catch (e) {
+      _showMessage(message: e.message);
+    } catch (e) {
+      _showMessage(message: 'Failed to resend OTP.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isResending = false;
+        });
+      }
+    }
+  }
 
   @override
   void dispose() {
     for (var controller in _controllers) {
       controller.dispose();
     }
+
     for (var node in _focusNodes) {
       node.dispose();
     }
+
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final bool isButtonDisabled = _isLoading || _isResending;
+
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -44,7 +188,6 @@ class _OtpScreenState extends State<OtpScreen> {
             children: [
               const SizedBox(height: 40),
 
-              // Illustration
               Image.asset(
                 'lib/assets/otp.jpg',
                 height: 180,
@@ -82,7 +225,6 @@ class _OtpScreenState extends State<OtpScreen> {
 
               const SizedBox(height: 40),
 
-              // OTP Fields
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: List.generate(6, (index) => _buildOtpField(index)),
@@ -90,7 +232,6 @@ class _OtpScreenState extends State<OtpScreen> {
 
               const SizedBox(height: 40),
 
-              // Resend OTP
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -99,15 +240,11 @@ class _OtpScreenState extends State<OtpScreen> {
                     style: TextStyle(color: Colors.grey, fontSize: 15),
                   ),
                   GestureDetector(
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("OTP Resent")),
-                      );
-                    },
-                    child: const Text(
-                      "RESEND OTP",
+                    onTap: isButtonDisabled ? null : _resendOtp,
+                    child: Text(
+                      _isResending ? "SENDING..." : "RESEND OTP",
                       style: TextStyle(
-                        color: primaryMaroon,
+                        color: isButtonDisabled ? Colors.grey : primaryMaroon,
                         fontWeight: FontWeight.bold,
                         fontSize: 15,
                       ),
@@ -118,7 +255,6 @@ class _OtpScreenState extends State<OtpScreen> {
 
               const SizedBox(height: 50),
 
-              // Verify Button
               SizedBox(
                 width: double.infinity,
                 height: 58,
@@ -130,19 +266,25 @@ class _OtpScreenState extends State<OtpScreen> {
                     ),
                     elevation: 2,
                   ),
-                  onPressed: () {
-                    // Changed to separate Patient helper method to resolve compilation issue
-                    AppRoutes.replaceWithPatientHome(context);
-                  },
-                  child: const Text(
-                    "VERIFY",
-                    style: TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 1.2,
-                      color: Colors.white,
-                    ),
-                  ),
+                  onPressed: isButtonDisabled ? null : _verifyOtp,
+                  child: _isLoading
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2.5,
+                          ),
+                        )
+                      : const Text(
+                          "VERIFY",
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.2,
+                            color: Colors.white,
+                          ),
+                        ),
                 ),
               ),
 
@@ -164,6 +306,7 @@ class _OtpScreenState extends State<OtpScreen> {
         textAlign: TextAlign.center,
         keyboardType: TextInputType.number,
         maxLength: 1,
+        enabled: !_isLoading && !_isResending,
         style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
         decoration: InputDecoration(
           counterText: "",
@@ -181,6 +324,14 @@ class _OtpScreenState extends State<OtpScreen> {
         onChanged: (value) {
           if (value.isNotEmpty && index < 5) {
             _focusNodes[index + 1].requestFocus();
+          }
+
+          if (value.isEmpty && index > 0) {
+            _focusNodes[index - 1].requestFocus();
+          }
+
+          if (index == 5 && _otpCode().length == 6) {
+            FocusScope.of(context).unfocus();
           }
         },
       ),

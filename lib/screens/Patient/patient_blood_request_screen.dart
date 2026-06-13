@@ -1,4 +1,5 @@
 // lib/screens/blood_request_screen.dart
+
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -7,7 +8,8 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../theme.dart';
-import '../../../services/auth_token_service.dart';
+import '../../sdk/patient/blood_request_sdk.dart';
+import '../../sdk/core/sdk_exception.dart';
 import 'patient_find_nearby_donors.dart';
 
 class PatientBloodRequestScreen extends StatefulWidget {
@@ -474,79 +476,48 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
     setState(() => isSubmitting = true);
 
     try {
-      final response = await AuthTokenService.authorizedPost(
-        '/blood-requests',
-        {
-          "patient_name": patientNameController.text.trim(),
-          "location": locationController.text.trim(),
-          "city": selectedCity ??
-              extractCityFromLocationText(locationController.text.trim()),
-          "hospital_name": hospitalController.text.trim(),
-          "blood_group": selectedBloodGroup,
-          "blood_constituents": selectedConstituents,
-          "case_description": caseController.text.trim(),
-          "latitude": latitude,
-          "longitude": longitude,
-        },
+      final String bloodRequestId = await BloodRequestSdk.createBloodRequest(
+        patientName: patientNameController.text.trim(),
+        location: locationController.text.trim(),
+        city: selectedCity ??
+            extractCityFromLocationText(locationController.text.trim()),
+        hospitalName: hospitalController.text.trim(),
+        bloodGroup: selectedBloodGroup!,
+        bloodConstituents: selectedConstituents,
+        caseDescription: caseController.text.trim(),
+        latitude: latitude!,
+        longitude: longitude!,
       );
 
       if (!mounted) return;
 
-      Map<String, dynamic> responseBody = {};
+      debugPrint("Blood Request Created Through SDK ID: $bloodRequestId");
 
-      try {
-        responseBody = jsonDecode(response.body);
-      } catch (_) {
-        responseBody = {};
-      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'latest_active_blood_request_id',
+        bloodRequestId,
+      );
 
-      if (response.statusCode == 201 && responseBody["success"] == true) {
-        ScaffoldMessenger.of(context).clearSnackBars();
+      setState(() {
+        isSubmitting = false;
+      });
 
-        final dynamic responseData = responseBody["data"];
-        final String? bloodRequestId = responseData is Map
-            ? responseData["id"]?.toString()
-            : null;
+      clearFormFields();
 
-        debugPrint("Blood Request Submit Response: ${response.body}");
-        debugPrint("Extracted Blood Request ID: $bloodRequestId");
+      await showSuccessAndRedirect(bloodRequestId);
+    } on SdkException catch (e) {
+      if (!mounted) return;
 
-        if (bloodRequestId == null || bloodRequestId.trim().isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Blood request ID not found in response."),
-            ),
-          );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
 
-          setState(() => isSubmitting = false);
-          return;
-        }
-
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString(
-          'latest_active_blood_request_id',
-          bloodRequestId,
-        );
-
-        setState(() {
-          isSubmitting = false;
-        });
-
-        clearFormFields();
-
-        await showSuccessAndRedirect(bloodRequestId);
-      } else {
-        final String errorMessage =
-            responseBody["message"] ?? "Failed to submit blood request.";
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(errorMessage)),
-        );
-
-        setState(() => isSubmitting = false);
-      }
+      setState(() => isSubmitting = false);
     } catch (e) {
       if (!mounted) return;
+
+      debugPrint("Blood request submit unknown error: $e");
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Error: $e")),
@@ -699,7 +670,9 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
                           ? "Required"
                           : null,
                     ),
+
                     const SizedBox(height: 20),
+
                     _buildLabel("Location"),
                     const SizedBox(height: 8),
                     TextFormField(
@@ -735,13 +708,17 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
                         return null;
                       },
                     ),
+
                     if (isSearchingLocation)
                       const Padding(
                         padding: EdgeInsets.only(top: 8),
                         child: LinearProgressIndicator(),
                       ),
+
                     buildLocationSuggestions(),
+
                     const SizedBox(height: 20),
+
                     _buildLabel("Hospital Name"),
                     const SizedBox(height: 8),
                     TextFormField(
@@ -751,7 +728,9 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
                           ? "Required"
                           : null,
                     ),
+
                     const SizedBox(height: 24),
+
                     _buildLabel("Blood Group"),
                     const SizedBox(height: 12),
                     Wrap(
@@ -791,7 +770,9 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
                         );
                       }).toList(),
                     ),
+
                     const SizedBox(height: 24),
+
                     _buildLabel("Blood Constituents"),
                     const SizedBox(height: 8),
                     Container(
@@ -812,7 +793,9 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
                         }).toList(),
                       ),
                     ),
+
                     const SizedBox(height: 24),
+
                     _buildLabel("Case"),
                     const SizedBox(height: 8),
                     TextFormField(
@@ -823,7 +806,9 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
                           ? "Required"
                           : null,
                     ),
+
                     const SizedBox(height: 40),
+
                     SizedBox(
                       width: double.infinity,
                       height: 56,
@@ -861,6 +846,7 @@ class _PatientBloodRequestScreenState extends State<PatientBloodRequestScreen>
               ),
             ),
           ),
+
           if (showSuccessCard)
             Positioned.fill(
               child: Container(

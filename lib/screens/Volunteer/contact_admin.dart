@@ -1,21 +1,8 @@
-import 'dart:convert';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
 
-class ApiConfig {
-  static const String baseUrl =
-      'https://manliness-smugness-qualm.ngrok-free.dev/api';
-
-  static const String tokenKey = 'auth_token';
-
-  static const String volunteerSendMessage = '$baseUrl/volunteer/contact-admin';
-  static const String volunteerMessages =
-      '$baseUrl/volunteer/contact-admin/messages';
-
-  static const String adminContacts = '$baseUrl/admin/volunteer-contacts';
-}
+import '../../sdk/volunteer/volunteer_contact_admin_sdk.dart';
 
 class ContactAdmin extends StatefulWidget {
   const ContactAdmin({super.key});
@@ -62,8 +49,10 @@ class _ContactAdminState extends State<ContactAdmin> {
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
           fillColor: AppColors.white,
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: 14,
+          ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
             borderSide: const BorderSide(color: AppColors.border),
@@ -121,288 +110,6 @@ class AppColors {
   static const Color danger = Color(0xFFDC3545);
 }
 
-class ApiException implements Exception {
-  final String message;
-  final int? statusCode;
-
-  ApiException(this.message, {this.statusCode});
-
-  @override
-  String toString() => message;
-}
-
-class VolunteerContactMessage {
-  final String contactId;
-  final String volunteerUid;
-  final String volunteerName;
-  final String volunteerEmail;
-  final String volunteerPhone;
-  final String subject;
-  final String message;
-  final String issueType;
-  final String status;
-  final String adminReply;
-  final String adminRepliedAt;
-  final bool isReadByAdmin;
-  final bool isReadByVolunteer;
-  final String createdAt;
-  final String updatedAt;
-
-  VolunteerContactMessage({
-    required this.contactId,
-    required this.volunteerUid,
-    required this.volunteerName,
-    required this.volunteerEmail,
-    required this.volunteerPhone,
-    required this.subject,
-    required this.message,
-    required this.issueType,
-    required this.status,
-    required this.adminReply,
-    required this.adminRepliedAt,
-    required this.isReadByAdmin,
-    required this.isReadByVolunteer,
-    required this.createdAt,
-    required this.updatedAt,
-  });
-
-  factory VolunteerContactMessage.fromJson(Map<String, dynamic> json) {
-    return VolunteerContactMessage(
-      contactId: _string(json['contact_id']),
-      volunteerUid: _string(json['volunteer_uid']),
-      volunteerName: _string(json['volunteer_name'], fallback: 'Volunteer'),
-      volunteerEmail: _string(json['volunteer_email']),
-      volunteerPhone: _string(json['volunteer_phone']),
-      subject: _string(json['subject']),
-      message: _string(json['message']),
-      issueType: _string(json['issue_type']),
-      status: _string(json['status'], fallback: 'open'),
-      adminReply: _string(json['admin_reply']),
-      adminRepliedAt: _string(json['admin_replied_at']),
-      isReadByAdmin: _bool(json['is_read_by_admin']),
-      isReadByVolunteer: _bool(json['is_read_by_volunteer']),
-      createdAt: _string(json['created_at']),
-      updatedAt: _string(json['updated_at']),
-    );
-  }
-
-  static String _string(dynamic value, {String fallback = ''}) {
-    if (value == null) return fallback;
-    final text = value.toString().trim();
-    if (text.isEmpty || text == 'null') return fallback;
-    return text;
-  }
-
-  static bool _bool(dynamic value) {
-    if (value == true) return true;
-    if (value == false) return false;
-    if (value is int) return value == 1;
-    if (value is String) {
-      final v = value.toLowerCase().trim();
-      return v == 'true' || v == '1' || v == 'yes';
-    }
-    return false;
-  }
-}
-
-class VolunteerContactApi {
-  Future<String> _getToken() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    final keys = [
-      ApiConfig.tokenKey,
-      'token',
-      'firebase_token',
-      'id_token',
-      'idToken',
-      'admin_token',
-      'volunteer_token',
-      'access_token',
-    ];
-
-    for (final key in keys) {
-      final token = prefs.getString(key);
-      if (token != null && token.trim().isNotEmpty) {
-        return token.trim();
-      }
-    }
-
-    throw ApiException('Login token not found. Please login again.');
-  }
-
-  Future<Map<String, String>> _headers() async {
-    final token = await _getToken();
-
-    return {
-      'Accept': 'application/json',
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer $token',
-      'ngrok-skip-browser-warning': 'true',
-    };
-  }
-
-  Map<String, dynamic> _decodeResponse(http.Response response) {
-    Map<String, dynamic> decoded = {};
-
-    try {
-      final body = jsonDecode(response.body);
-      if (body is Map<String, dynamic>) {
-        decoded = body;
-      } else if (body is Map) {
-        decoded = Map<String, dynamic>.from(body);
-      }
-    } catch (_) {
-      throw ApiException(
-        'Invalid server response.',
-        statusCode: response.statusCode,
-      );
-    }
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(
-        decoded['message']?.toString() ?? 'Request failed.',
-        statusCode: response.statusCode,
-      );
-    }
-
-    if (decoded['success'] == false) {
-      throw ApiException(
-        decoded['message']?.toString() ?? 'Request failed.',
-        statusCode: response.statusCode,
-      );
-    }
-
-    return decoded;
-  }
-
-  List<VolunteerContactMessage> _messagesFromResponse(
-    Map<String, dynamic> decoded,
-  ) {
-    final rawData = decoded['data'];
-
-    if (rawData is List) {
-      return rawData
-          .whereType<Map>()
-          .map(
-            (item) => VolunteerContactMessage.fromJson(
-              Map<String, dynamic>.from(item),
-            ),
-          )
-          .toList();
-    }
-
-    return [];
-  }
-
-  VolunteerContactMessage _messageFromResponse(
-    Map<String, dynamic> decoded,
-  ) {
-    final rawData = decoded['data'];
-
-    if (rawData is Map) {
-      return VolunteerContactMessage.fromJson(
-        Map<String, dynamic>.from(rawData),
-      );
-    }
-
-    throw ApiException('Message data not found.');
-  }
-
-  Future<List<VolunteerContactMessage>> getVolunteerMessages() async {
-    final response = await http.get(
-      Uri.parse(ApiConfig.volunteerMessages),
-      headers: await _headers(),
-    );
-
-    return _messagesFromResponse(_decodeResponse(response));
-  }
-
-  Future<VolunteerContactMessage> getVolunteerMessageDetail(
-    String contactId,
-  ) async {
-    final response = await http.get(
-      Uri.parse('${ApiConfig.volunteerMessages}/$contactId'),
-      headers: await _headers(),
-    );
-
-    return _messageFromResponse(_decodeResponse(response));
-  }
-
-  Future<VolunteerContactMessage> sendMessageToAdmin({
-    required String subject,
-    required String message,
-    String? issueType,
-    String? phone,
-  }) async {
-    final body = <String, dynamic>{
-      'subject': subject.trim(),
-      'message': message.trim(),
-    };
-
-    if (issueType != null && issueType.trim().isNotEmpty) {
-      body['issue_type'] = issueType.trim();
-    }
-
-    if (phone != null && phone.trim().isNotEmpty) {
-      body['phone'] = phone.trim();
-    }
-
-    final response = await http.post(
-      Uri.parse(ApiConfig.volunteerSendMessage),
-      headers: await _headers(),
-      body: jsonEncode(body),
-    );
-
-    return _messageFromResponse(_decodeResponse(response));
-  }
-
-  Future<List<VolunteerContactMessage>> getAdminContacts() async {
-    final response = await http.get(
-      Uri.parse(ApiConfig.adminContacts),
-      headers: await _headers(),
-    );
-
-    return _messagesFromResponse(_decodeResponse(response));
-  }
-
-  Future<VolunteerContactMessage> getAdminContactDetail(
-    String contactId,
-  ) async {
-    final response = await http.get(
-      Uri.parse('${ApiConfig.adminContacts}/$contactId'),
-      headers: await _headers(),
-    );
-
-    return _messageFromResponse(_decodeResponse(response));
-  }
-
-  Future<void> markAdminContactAsRead(String contactId) async {
-    final response = await http.post(
-      Uri.parse('${ApiConfig.adminContacts}/$contactId/mark-read'),
-      headers: await _headers(),
-    );
-
-    _decodeResponse(response);
-  }
-
-  Future<void> replyToVolunteer({
-    required String contactId,
-    required String reply,
-  }) async {
-    final response = await http.post(
-      Uri.parse('${ApiConfig.adminContacts}/$contactId/reply'),
-      headers: await _headers(),
-      body: jsonEncode({
-        'reply': reply.trim(),
-        'admin_reply': reply.trim(),
-        'message': reply.trim(),
-      }),
-    );
-
-    _decodeResponse(response);
-  }
-}
-
 class VolunteerMessagesScreen extends StatefulWidget {
   const VolunteerMessagesScreen({super.key});
 
@@ -412,16 +119,51 @@ class VolunteerMessagesScreen extends StatefulWidget {
 }
 
 class _VolunteerMessagesScreenState extends State<VolunteerMessagesScreen> {
-  final VolunteerContactApi api = VolunteerContactApi();
-
   bool loading = true;
   String? error;
   List<VolunteerContactMessage> messages = [];
+  StreamSubscription<List<VolunteerContactMessage>>? messagesSubscription;
 
   @override
   void initState() {
     super.initState();
-    fetchMessages();
+    startMessagesListener();
+  }
+
+  @override
+  void dispose() {
+    messagesSubscription?.cancel();
+    super.dispose();
+  }
+
+  void startMessagesListener() {
+    setState(() {
+      loading = true;
+      error = null;
+    });
+
+    messagesSubscription?.cancel();
+
+    messagesSubscription =
+        VolunteerContactAdminSdk.watchVolunteerMessages().listen(
+      (result) {
+        if (!mounted) return;
+
+        setState(() {
+          messages = result;
+          loading = false;
+          error = null;
+        });
+      },
+      onError: (e) {
+        if (!mounted) return;
+
+        setState(() {
+          error = e.toString();
+          loading = false;
+        });
+      },
+    );
   }
 
   Future<void> fetchMessages() async {
@@ -431,7 +173,7 @@ class _VolunteerMessagesScreenState extends State<VolunteerMessagesScreen> {
     });
 
     try {
-      final result = await api.getVolunteerMessages();
+      final result = await VolunteerContactAdminSdk.getVolunteerMessages();
 
       if (!mounted) return;
 
@@ -452,13 +194,11 @@ class _VolunteerMessagesScreenState extends State<VolunteerMessagesScreen> {
   Future<void> openSendScreen() async {
     final created = await Navigator.push<bool>(
       context,
-      MaterialPageRoute(
-        builder: (_) => const SendVolunteerMessageScreen(),
-      ),
+      MaterialPageRoute(builder: (_) => const SendVolunteerMessageScreen()),
     );
 
     if (created == true) {
-      fetchMessages();
+      await fetchMessages();
     }
   }
 
@@ -473,7 +213,7 @@ class _VolunteerMessagesScreenState extends State<VolunteerMessagesScreen> {
       ),
     );
 
-    fetchMessages();
+    await fetchMessages();
   }
 
   @override
@@ -483,17 +223,13 @@ class _VolunteerMessagesScreenState extends State<VolunteerMessagesScreen> {
       appBar: AppBar(
         title: const Text('My Admin Messages'),
         actions: [
-          IconButton(
-            onPressed: fetchMessages,
-            icon: const Icon(Icons.refresh),
-          ),
+          IconButton(onPressed: fetchMessages, icon: const Icon(Icons.refresh)),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: AppColors.maroon,
         foregroundColor: AppColors.white,
         onPressed: openSendScreen,
-        icon: const Icon(Icons.add),
         label: const Text('Contact Admin'),
       ),
       body: RefreshIndicator(
@@ -512,10 +248,7 @@ class _VolunteerMessagesScreenState extends State<VolunteerMessagesScreen> {
     }
 
     if (error != null) {
-      return ErrorState(
-        message: error!,
-        onRetry: fetchMessages,
-      );
+      return ErrorState(message: error!, onRetry: startMessagesListener);
     }
 
     if (messages.isEmpty) {
@@ -553,8 +286,6 @@ class SendVolunteerMessageScreen extends StatefulWidget {
 
 class _SendVolunteerMessageScreenState
     extends State<SendVolunteerMessageScreen> {
-  final VolunteerContactApi api = VolunteerContactApi();
-
   final formKey = GlobalKey<FormState>();
   final subjectController = TextEditingController();
   final messageController = TextEditingController();
@@ -580,7 +311,7 @@ class _SendVolunteerMessageScreenState
     });
 
     try {
-      await api.sendMessageToAdmin(
+      await VolunteerContactAdminSdk.sendMessageToAdmin(
         subject: subjectController.text,
         message: messageController.text,
         issueType: issueTypeController.text,
@@ -619,9 +350,7 @@ class _SendVolunteerMessageScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.softWhite,
-      appBar: AppBar(
-        title: const Text('Contact Admin'),
-      ),
+      appBar: AppBar(title: const Text('Contact Admin')),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: CardContainer(
@@ -656,6 +385,7 @@ class _SendVolunteerMessageScreenState
                     if (value == null || value.trim().isEmpty) {
                       return 'Subject is required.';
                     }
+
                     return null;
                   },
                 ),
@@ -693,6 +423,7 @@ class _SendVolunteerMessageScreenState
                     if (value == null || value.trim().isEmpty) {
                       return 'Message is required.';
                     }
+
                     return null;
                   },
                 ),
@@ -733,11 +464,10 @@ class AdminVolunteerContactsScreen extends StatefulWidget {
 
 class _AdminVolunteerContactsScreenState
     extends State<AdminVolunteerContactsScreen> {
-  final VolunteerContactApi api = VolunteerContactApi();
-
   bool loading = true;
   String? error;
   List<VolunteerContactMessage> contacts = [];
+  StreamSubscription<List<VolunteerContactMessage>>? contactsSubscription;
 
   int get unreadCount =>
       contacts.where((item) => item.isReadByAdmin == false).length;
@@ -745,7 +475,42 @@ class _AdminVolunteerContactsScreenState
   @override
   void initState() {
     super.initState();
-    fetchContacts();
+    startContactsListener();
+  }
+
+  @override
+  void dispose() {
+    contactsSubscription?.cancel();
+    super.dispose();
+  }
+
+  void startContactsListener() {
+    setState(() {
+      loading = true;
+      error = null;
+    });
+
+    contactsSubscription?.cancel();
+
+    contactsSubscription = VolunteerContactAdminSdk.watchAdminContacts().listen(
+      (result) {
+        if (!mounted) return;
+
+        setState(() {
+          contacts = result;
+          loading = false;
+          error = null;
+        });
+      },
+      onError: (e) {
+        if (!mounted) return;
+
+        setState(() {
+          error = e.toString();
+          loading = false;
+        });
+      },
+    );
   }
 
   Future<void> fetchContacts() async {
@@ -755,7 +520,7 @@ class _AdminVolunteerContactsScreenState
     });
 
     try {
-      final result = await api.getAdminContacts();
+      final result = await VolunteerContactAdminSdk.getAdminContacts();
 
       if (!mounted) return;
 
@@ -784,7 +549,7 @@ class _AdminVolunteerContactsScreenState
       ),
     );
 
-    fetchContacts();
+    await fetchContacts();
   }
 
   @override
@@ -794,10 +559,7 @@ class _AdminVolunteerContactsScreenState
       appBar: AppBar(
         title: const Text('Volunteer Contacts'),
         actions: [
-          IconButton(
-            onPressed: fetchContacts,
-            icon: const Icon(Icons.refresh),
-          ),
+          IconButton(onPressed: fetchContacts, icon: const Icon(Icons.refresh)),
         ],
       ),
       body: RefreshIndicator(
@@ -816,10 +578,7 @@ class _AdminVolunteerContactsScreenState
     }
 
     if (error != null) {
-      return ErrorState(
-        message: error!,
-        onRetry: fetchContacts,
-      );
+      return ErrorState(message: error!, onRetry: startContactsListener);
     }
 
     if (contacts.isEmpty) {
@@ -832,10 +591,7 @@ class _AdminVolunteerContactsScreenState
     return ListView(
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
       children: [
-        SummaryBox(
-          total: contacts.length,
-          unread: unreadCount,
-        ),
+        SummaryBox(total: contacts.length, unread: unreadCount),
         const SizedBox(height: 12),
         ...contacts.map(
           (item) => ContactCard(
@@ -866,24 +622,60 @@ class VolunteerMessageDetailScreen extends StatefulWidget {
 
 class _VolunteerMessageDetailScreenState
     extends State<VolunteerMessageDetailScreen> {
-  final VolunteerContactApi api = VolunteerContactApi();
   final replyController = TextEditingController();
 
   bool loading = true;
   bool actionLoading = false;
   String? error;
   VolunteerContactMessage? message;
+  StreamSubscription<VolunteerContactMessage?>? detailSubscription;
 
   @override
   void initState() {
     super.initState();
-    fetchDetail();
+    startDetailListener();
   }
 
   @override
   void dispose() {
+    detailSubscription?.cancel();
     replyController.dispose();
     super.dispose();
+  }
+
+  void startDetailListener() {
+    setState(() {
+      loading = true;
+      error = null;
+    });
+
+    detailSubscription?.cancel();
+
+    final stream = widget.isAdminView
+        ? VolunteerContactAdminSdk.watchAdminContactDetail(widget.contactId)
+        : VolunteerContactAdminSdk.watchVolunteerMessageDetail(
+            widget.contactId,
+          );
+
+    detailSubscription = stream.listen(
+      (result) {
+        if (!mounted) return;
+
+        setState(() {
+          message = result;
+          loading = false;
+          error = null;
+        });
+      },
+      onError: (e) {
+        if (!mounted) return;
+
+        setState(() {
+          error = e.toString();
+          loading = false;
+        });
+      },
+    );
   }
 
   Future<void> fetchDetail() async {
@@ -894,8 +686,12 @@ class _VolunteerMessageDetailScreenState
 
     try {
       final result = widget.isAdminView
-          ? await api.getAdminContactDetail(widget.contactId)
-          : await api.getVolunteerMessageDetail(widget.contactId);
+          ? await VolunteerContactAdminSdk.getAdminContactDetail(
+              widget.contactId,
+            )
+          : await VolunteerContactAdminSdk.getVolunteerMessageDetail(
+              widget.contactId,
+            );
 
       if (!mounted) return;
 
@@ -920,7 +716,7 @@ class _VolunteerMessageDetailScreenState
     });
 
     try {
-      await api.markAdminContactAsRead(widget.contactId);
+      await VolunteerContactAdminSdk.markAdminContactAsRead(widget.contactId);
 
       if (!mounted) return;
 
@@ -968,12 +764,14 @@ class _VolunteerMessageDetailScreenState
     });
 
     try {
-      await api.replyToVolunteer(
+      await VolunteerContactAdminSdk.replyToVolunteer(
         contactId: widget.contactId,
         reply: reply,
       );
 
       if (!mounted) return;
+
+      replyController.clear();
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -1007,9 +805,7 @@ class _VolunteerMessageDetailScreenState
 
     return Scaffold(
       backgroundColor: AppColors.softWhite,
-      appBar: AppBar(
-        title: Text(title),
-      ),
+      appBar: AppBar(title: Text(title)),
       body: _buildBody(),
     );
   }
@@ -1022,10 +818,7 @@ class _VolunteerMessageDetailScreenState
     }
 
     if (error != null) {
-      return ErrorState(
-        message: error!,
-        onRetry: fetchDetail,
-      );
+      return ErrorState(message: error!, onRetry: startDetailListener);
     }
 
     final item = message;
@@ -1063,6 +856,15 @@ class _VolunteerMessageDetailScreenState
                             ? AppColors.success
                             : AppColors.danger,
                       ),
+                    if (!widget.isAdminView &&
+                        item.adminReply.trim().isNotEmpty &&
+                        item.isReadByVolunteer == false) ...[
+                      const SizedBox(width: 8),
+                      const StatusBadge(
+                        text: 'New Reply',
+                        color: AppColors.danger,
+                      ),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 16),
@@ -1230,6 +1032,8 @@ class ContactCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasReply = item.adminReply.trim().isNotEmpty;
+    final hasUnreadVolunteerReply =
+        !isAdminView && hasReply && item.isReadByVolunteer == false;
 
     return InkWell(
       onTap: onTap,
@@ -1303,6 +1107,11 @@ class ContactCard extends StatelessWidget {
                         text: hasReply ? 'Replied' : 'Pending',
                         color: hasReply ? AppColors.success : AppColors.maroon,
                       ),
+                      if (hasUnreadVolunteerReply)
+                        const StatusBadge(
+                          text: 'New Reply',
+                          color: AppColors.danger,
+                        ),
                       if (isAdminView)
                         StatusBadge(
                           text: item.isReadByAdmin ? 'Read' : 'Unread',
@@ -1336,11 +1145,7 @@ class SummaryBox extends StatelessWidget {
   final int total;
   final int unread;
 
-  const SummaryBox({
-    super.key,
-    required this.total,
-    required this.unread,
-  });
+  const SummaryBox({super.key, required this.total, required this.unread});
 
   @override
   Widget build(BuildContext context) {
@@ -1354,11 +1159,7 @@ class SummaryBox extends StatelessWidget {
               icon: Icons.inbox,
             ),
           ),
-          Container(
-            height: 44,
-            width: 1,
-            color: AppColors.border,
-          ),
+          Container(height: 44, width: 1, color: AppColors.border),
           Expanded(
             child: _SummaryItem(
               title: 'Unread',
@@ -1404,10 +1205,7 @@ class _SummaryItem extends StatelessWidget {
                 fontWeight: FontWeight.w900,
               ),
             ),
-            Text(
-              title,
-              style: const TextStyle(color: AppColors.muted),
-            ),
+            Text(title, style: const TextStyle(color: AppColors.muted)),
           ],
         ),
       ],
@@ -1418,10 +1216,7 @@ class _SummaryItem extends StatelessWidget {
 class CardContainer extends StatelessWidget {
   final Widget child;
 
-  const CardContainer({
-    super.key,
-    required this.child,
-  });
+  const CardContainer({super.key, required this.child});
 
   @override
   Widget build(BuildContext context) {
@@ -1449,11 +1244,7 @@ class StatusBadge extends StatelessWidget {
   final String text;
   final Color color;
 
-  const StatusBadge({
-    super.key,
-    required this.text,
-    required this.color,
-  });
+  const StatusBadge({super.key, required this.text, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -1481,11 +1272,7 @@ class InfoRow extends StatelessWidget {
   final String label;
   final String value;
 
-  const InfoRow({
-    super.key,
-    required this.label,
-    required this.value,
-  });
+  const InfoRow({super.key, required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {
@@ -1564,10 +1351,7 @@ class EmptyState extends StatelessWidget {
         ),
         if (buttonText != null && onPressed != null) ...[
           const SizedBox(height: 22),
-          ElevatedButton(
-            onPressed: onPressed,
-            child: Text(buttonText!),
-          ),
+          ElevatedButton(onPressed: onPressed, child: Text(buttonText!)),
         ],
       ],
     );
@@ -1578,11 +1362,7 @@ class ErrorState extends StatelessWidget {
   final String message;
   final VoidCallback onRetry;
 
-  const ErrorState({
-    super.key,
-    required this.message,
-    required this.onRetry,
-  });
+  const ErrorState({super.key, required this.message, required this.onRetry});
 
   @override
   Widget build(BuildContext context) {
@@ -1590,11 +1370,7 @@ class ErrorState extends StatelessWidget {
       padding: const EdgeInsets.all(24),
       children: [
         const SizedBox(height: 90),
-        const Icon(
-          Icons.error_outline,
-          size: 76,
-          color: AppColors.danger,
-        ),
+        const Icon(Icons.error_outline, size: 76, color: AppColors.danger),
         const SizedBox(height: 18),
         const Text(
           'Something went wrong',

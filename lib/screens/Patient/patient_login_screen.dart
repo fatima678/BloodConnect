@@ -1,13 +1,14 @@
 // lib/screens/patients/Patient_Login_screen.dart
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 
 import '../../theme.dart';
-import '../../../routes.dart';
-import '../../../services/auth_token_service.dart';
+import '../../routes.dart';
+import '../../sdk/auth/auth_sdk.dart';
+import '../../sdk/core/sdk_exception.dart';
+import '../../services/firestore_notification_listener_service.dart';
 
 class PatientLoginScreen extends StatefulWidget {
   const PatientLoginScreen({super.key});
@@ -22,6 +23,22 @@ class _PatientLoginScreenState extends State<PatientLoginScreen> {
 
   bool isLoading = false;
   bool _obscurePassword = true;
+
+  void showMessage({
+    required String message,
+    Color backgroundColor = Colors.red,
+  }) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: backgroundColor,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
 
   Future<String?> _getFcmToken() async {
     try {
@@ -41,7 +58,7 @@ class _PatientLoginScreenState extends State<PatientLoginScreen> {
         return null;
       }
 
-      return fcmToken;
+      return fcmToken.trim();
     } catch (e) {
       debugPrint("FCM Token Error: $e");
       return null;
@@ -49,144 +66,124 @@ class _PatientLoginScreenState extends State<PatientLoginScreen> {
   }
 
   Future<void> loginPatient() async {
-    final String email = emailController.text.trim();
+    FocusScope.of(context).unfocus();
+
+    final String email = emailController.text.trim().toLowerCase();
     final String password = passwordController.text.trim();
 
     if (email.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please fill all fields")),
-      );
+      showMessage(message: "Please fill all fields");
       return;
     }
 
     setState(() => isLoading = true);
 
     try {
-      final String? fcmToken = await _getFcmToken();
-
-      final Map<String, dynamic> loginBody = {
-        'email': email,
-        'password': password,
-        'role': 'patient',
-        'device_type': 'android',
-      };
-
-      if (fcmToken != null && fcmToken.isNotEmpty) {
-        loginBody['fcm_token'] = fcmToken;
-      }
-
-      debugPrint("FINAL LOGIN BODY: ${jsonEncode(loginBody)}");
-
-      final response = await http
-          .post(
-            Uri.parse('${AuthTokenService.baseUrl}/login'),
-            headers: {
-              'Accept': 'application/json',
-              'Content-Type': 'application/json',
-              'ngrok-skip-browser-warning': 'true',
-            },
-            body: jsonEncode(loginBody),
-          )
-          .timeout(const Duration(seconds: 20));
-
-      debugPrint("Login Status: ${response.statusCode}");
-      debugPrint("Login Response: ${response.body}");
-
-      Map<String, dynamic> data = {};
-
-      try {
-        data = jsonDecode(response.body);
-      } catch (_) {
-        data = {};
-      }
-
-      if (!mounted) return;
-
-      if (response.statusCode != 200 || data['success'] != true) {
-        setState(() => isLoading = false);
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(data['message'] ?? "Invalid Email or Password"),
-          ),
-        );
-        return;
-      }
-
-      final String? token = data['token']?.toString();
-      final String? refreshToken = data['refresh_token']?.toString();
-
-      final Map<String, dynamic>? userData =
-          data['data'] is Map<String, dynamic>
-              ? data['data'] as Map<String, dynamic>
-              : null;
-
-      if (token == null || refreshToken == null || userData == null) {
-        setState(() => isLoading = false);
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Login data incomplete")),
-        );
-        return;
-      }
-
-      await AuthTokenService.saveSession(
-        token: token,
-        refreshToken: refreshToken,
-        expiresIn: int.tryParse('${data['expires_in'] ?? 3600}') ?? 3600,
-        user: userData,
+      final user = await AuthSdk.login(
+        email: email,
+        password: password,
+        expectedRole: 'patient',
       );
 
-      final bool fcmTokenSaved = data['fcm_token_saved'] == true;
+      final firebaseUser = FirebaseAuth.instance.currentUser;
 
-      debugPrint("LOGIN SUCCESS");
+      if (firebaseUser == null) {
+        throw const SdkException('Login session not found.');
+      }
+
+      await firebaseUser.reload();
+
+      final refreshedUser = FirebaseAuth.instance.currentUser;
+
+      if (refreshedUser == null) {
+        throw const SdkException('Login session not found.');
+      }
+
+      if (!refreshedUser.emailVerified) {
+        try {
+          await refreshedUser.sendEmailVerification();
+        } catch (_) {}
+
+        if (!mounted) return;
+
+        setState(() => isLoading = false);
+
+        showMessage(
+          message: 'Please verify your email first. Verification email sent.',
+          backgroundColor: Colors.orange,
+        );
+
+        await Future.delayed(const Duration(milliseconds: 700));
+
+        if (!mounted) return;
+
+        Navigator.pushReplacementNamed(context, AppRoutes.patientVerifyEmail);
+        return;
+      }
+
+      final String? fcmToken = await _getFcmToken();
+
+      bool fcmTokenSaved = false;
+
+      if (fcmToken != null && fcmToken.isNotEmpty) {
+        await AuthSdk.saveFcmTokenForUser(
+          user: user,
+          fcmToken: fcmToken,
+          deviceType: 'android',
+        );
+
+        fcmTokenSaved = true;
+      }
+
+      debugPrint("PATIENT LOGIN SUCCESS");
       debugPrint("FCM TOKEN SAVED: $fcmTokenSaved");
+
+      await FirestoreNotificationListenerService.startForCurrentUser();
 
       if (!mounted) return;
 
       setState(() => isLoading = false);
 
       if (!fcmTokenSaved) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              "Login successful, but notification token was not saved.",
-            ),
-          ),
+        showMessage(
+          message: "Login successful, but notification token was not saved.",
+          backgroundColor: Colors.orange,
         );
+
+        await Future.delayed(const Duration(milliseconds: 500));
       }
 
-      final String role = (userData['role'] ?? '')
-          .toString()
-          .toLowerCase()
-          .trim();
+      if (!mounted) return;
 
-      if (role == "patient" || role == "donor") {
-        Navigator.pushReplacementNamed(context, AppRoutes.patientHome);
-      } else if (role == "team_volunteer" || role == "volunteer") {
-        Navigator.pushReplacementNamed(context, AppRoutes.volunteerDashboard);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Invalid user role")),
-        );
-      }
+      Navigator.pushReplacementNamed(context, AppRoutes.patientHome);
+    } on SdkException catch (e) {
+      if (!mounted) return;
+
+      setState(() => isLoading = false);
+
+      showMessage(message: e.message);
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+
+      setState(() => isLoading = false);
+
+      showMessage(message: e.message ?? 'Login failed. Please try again.');
     } catch (e) {
       if (!mounted) return;
 
       setState(() => isLoading = false);
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Connection Error: $e")),
-      );
+      debugPrint("Patient login unknown error: $e");
+
+      showMessage(message: "Login failed. Please try again.");
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    debugPrint("LOGIN SCREEN BUILD RUNNING");
+    debugPrint("PATIENT LOGIN SCREEN BUILD RUNNING");
 
     return Scaffold(
-      // Background fix taake bottom tak safe solid color stretch ho ske
       backgroundColor: const Color(0xFF8B0000),
       body: Container(
         width: double.infinity,
@@ -200,6 +197,7 @@ class _PatientLoginScreenState extends State<PatientLoginScreen> {
         ),
         child: SafeArea(
           child: SingleChildScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Column(
@@ -220,16 +218,18 @@ class _PatientLoginScreenState extends State<PatientLoginScreen> {
                           color: Colors.white,
                           size: 20,
                         ),
-                        onPressed: () {
-                          if (Navigator.canPop(context)) {
-                            Navigator.pop(context);
-                          } else {
-                            Navigator.pushReplacementNamed(
-                              context,
-                              AppRoutes.roleSelection,
-                            );
-                          }
-                        },
+                        onPressed: isLoading
+                            ? null
+                            : () {
+                                if (Navigator.canPop(context)) {
+                                  Navigator.pop(context);
+                                } else {
+                                  Navigator.pushReplacementNamed(
+                                    context,
+                                    AppRoutes.roleSelection,
+                                  );
+                                }
+                              },
                       ),
                     ),
                   ),
@@ -275,34 +275,33 @@ class _PatientLoginScreenState extends State<PatientLoginScreen> {
                     child: Row(
                       children: [
                         Expanded(
-                          child: GestureDetector(
-                            onTap: () {},
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              decoration: const BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.horizontal(
-                                  left: Radius.circular(30),
-                                ),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            decoration: const BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.horizontal(
+                                left: Radius.circular(30),
                               ),
-                              child: const Text(
-                                "Login",
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF6B0000),
-                                ),
+                            ),
+                            child: const Text(
+                              "Login",
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF6B0000),
                               ),
                             ),
                           ),
                         ),
                         Expanded(
                           child: GestureDetector(
-                            onTap: () => Navigator.pushReplacementNamed(
-                              context,
-                              AppRoutes.patientRegister,
-                            ),
+                            onTap: isLoading
+                                ? null
+                                : () => Navigator.pushReplacementNamed(
+                                      context,
+                                      AppRoutes.patientRegister,
+                                    ),
                             child: Container(
                               padding: const EdgeInsets.symmetric(vertical: 14),
                               child: const Text(
@@ -336,6 +335,8 @@ class _PatientLoginScreenState extends State<PatientLoginScreen> {
                           hint: "Email Address",
                           icon: Icons.alternate_email,
                           controller: emailController,
+                          keyboardType: TextInputType.emailAddress,
+                          textInputAction: TextInputAction.next,
                         ),
 
                         const SizedBox(height: 16),
@@ -345,6 +346,13 @@ class _PatientLoginScreenState extends State<PatientLoginScreen> {
                           icon: Icons.lock_outline,
                           controller: passwordController,
                           isPassword: true,
+                          keyboardType: TextInputType.visiblePassword,
+                          textInputAction: TextInputAction.done,
+                          onSubmitted: (_) {
+                            if (!isLoading) {
+                              loginPatient();
+                            }
+                          },
                         ),
 
                         const SizedBox(height: 8),
@@ -352,10 +360,12 @@ class _PatientLoginScreenState extends State<PatientLoginScreen> {
                         Align(
                           alignment: Alignment.centerRight,
                           child: TextButton(
-                            onPressed: () => Navigator.pushNamed(
-                              context,
-                              AppRoutes.patientForgetPassword,
-                            ),
+                            onPressed: isLoading
+                                ? null
+                                : () => Navigator.pushNamed(
+                                      context,
+                                      AppRoutes.patientForgetPassword,
+                                    ),
                             child: const Text(
                               "Forgot Password?",
                               style: TextStyle(
@@ -374,14 +384,21 @@ class _PatientLoginScreenState extends State<PatientLoginScreen> {
                           child: ElevatedButton(
                             style: ElevatedButton.styleFrom(
                               backgroundColor: primaryMaroon,
+                              disabledBackgroundColor:
+                                  primaryMaroon.withOpacity(0.65),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(18),
                               ),
                             ),
                             onPressed: isLoading ? null : loginPatient,
                             child: isLoading
-                                ? const CircularProgressIndicator(
-                                    color: whiteColor,
+                                ? const SizedBox(
+                                    width: 24,
+                                    height: 24,
+                                    child: CircularProgressIndicator(
+                                      color: whiteColor,
+                                      strokeWidth: 2.5,
+                                    ),
                                   )
                                 : const Text(
                                     "LOGIN",
@@ -400,10 +417,12 @@ class _PatientLoginScreenState extends State<PatientLoginScreen> {
                   const SizedBox(height: 40),
 
                   GestureDetector(
-                    onTap: () => Navigator.pushNamed(
-                      context,
-                      AppRoutes.patientPhoneLogin,
-                    ),
+                    onTap: isLoading
+                        ? null
+                        : () => Navigator.pushNamed(
+                              context,
+                              AppRoutes.patientPhoneLogin,
+                            ),
                     child: const Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -420,6 +439,7 @@ class _PatientLoginScreenState extends State<PatientLoginScreen> {
                       ],
                     ),
                   ),
+
                   const SizedBox(height: 24),
                 ],
               ),
@@ -435,6 +455,9 @@ class _PatientLoginScreenState extends State<PatientLoginScreen> {
     required IconData icon,
     required TextEditingController controller,
     bool isPassword = false,
+    TextInputType keyboardType = TextInputType.text,
+    TextInputAction textInputAction = TextInputAction.next,
+    void Function(String)? onSubmitted,
   }) {
     return Container(
       decoration: BoxDecoration(
@@ -444,6 +467,10 @@ class _PatientLoginScreenState extends State<PatientLoginScreen> {
       child: TextField(
         controller: controller,
         obscureText: isPassword && _obscurePassword,
+        keyboardType: keyboardType,
+        textInputAction: textInputAction,
+        enabled: !isLoading,
+        onSubmitted: onSubmitted,
         decoration: InputDecoration(
           prefixIcon: Icon(icon, color: primaryMaroon),
           hintText: hint,
@@ -456,14 +483,18 @@ class _PatientLoginScreenState extends State<PatientLoginScreen> {
           suffixIcon: isPassword
               ? IconButton(
                   icon: Icon(
-                    _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                    _obscurePassword
+                        ? Icons.visibility_off
+                        : Icons.visibility,
                     color: primaryMaroon,
                   ),
-                  onPressed: () {
-                    setState(() {
-                      _obscurePassword = !_obscurePassword;
-                    });
-                  },
+                  onPressed: isLoading
+                      ? null
+                      : () {
+                          setState(() {
+                            _obscurePassword = !_obscurePassword;
+                          });
+                        },
                 )
               : null,
         ),

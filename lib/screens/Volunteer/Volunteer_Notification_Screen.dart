@@ -1,18 +1,11 @@
-import 'dart:async';
-import 'dart:convert';
-
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../sdk/volunteer/volunteer_notification_sdk.dart';
 
 class VolunteerNotificationScreen extends StatelessWidget {
   final String? authToken;
 
-  const VolunteerNotificationScreen({
-    super.key,
-    this.authToken,
-  });
+  const VolunteerNotificationScreen({super.key, this.authToken});
 
   @override
   Widget build(BuildContext context) {
@@ -23,10 +16,7 @@ class VolunteerNotificationScreen extends StatelessWidget {
 class VolunteerNotificationPage extends StatefulWidget {
   final String? authToken;
 
-  const VolunteerNotificationPage({
-    super.key,
-    this.authToken,
-  });
+  const VolunteerNotificationPage({super.key, this.authToken});
 
   @override
   State<VolunteerNotificationPage> createState() =>
@@ -34,159 +24,28 @@ class VolunteerNotificationPage extends StatefulWidget {
 }
 
 class _VolunteerNotificationPageState extends State<VolunteerNotificationPage> {
-  static const String _baseUrl =
-      'https://manliness-smugness-qualm.ngrok-free.dev/api';
-
   static const Color _maroon = Color(0xFF7B1020);
   static const Color _maroonDark = Color(0xFF5C0B17);
   static const Color _softWhite = Color(0xFFFAF7F8);
   static const Color _borderColor = Color(0xFFEAD8DC);
 
-  String? _token;
   late Future<List<VolunteerNotificationModel>> _notificationsFuture;
-  
+
   @override
   void initState() {
     super.initState();
     _notificationsFuture = _fetchNotifications();
   }
 
-  Future<String> _getToken({bool forceRefresh = false}) async {
-    final token = await _VolunteerAuthTokenHelper.getToken(
-      providedToken: widget.authToken,
-      forceRefresh: forceRefresh,
-    );
-
-    _token = token;
-    return token;
-  }
-
-  Map<String, String> _headers(String token) {
-    return {
-      'Accept': 'application/json',
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer $token',
-      'ngrok-skip-browser-warning': 'true',
-    };
-  }
-
-  Future<http.Response> _authorizedGet(Uri uri) async {
-    final token = await _getToken();
-
-    http.Response response = await http
-        .get(
-          uri,
-          headers: _headers(token),
-        )
-        .timeout(const Duration(seconds: 25));
-
-    if (response.statusCode == 401 || response.statusCode == 403) {
-      try {
-        final freshToken = await _getToken(forceRefresh: true);
-
-        response = await http
-            .get(
-              uri,
-              headers: _headers(freshToken),
-            )
-            .timeout(const Duration(seconds: 25));
-      } catch (_) {
-        // Keep original response if refresh is not possible.
-      }
-    }
-
-    return response;
-  }
-
-  Future<http.Response> _authorizedPatch(Uri uri) async {
-    final token = await _getToken();
-
-    http.Response response = await http
-        .patch(
-          uri,
-          headers: _headers(token),
-        )
-        .timeout(const Duration(seconds: 25));
-
-    if (response.statusCode == 401 || response.statusCode == 403) {
-      try {
-        final freshToken = await _getToken(forceRefresh: true);
-
-        response = await http
-            .patch(
-              uri,
-              headers: _headers(freshToken),
-            )
-            .timeout(const Duration(seconds: 25));
-      } catch (_) {
-        // Keep original response if refresh is not possible.
-      }
-    }
-
-    return response;
-  }
-
   Future<List<VolunteerNotificationModel>> _fetchNotifications() async {
-    final uri = Uri.parse('$_baseUrl/volunteer/notifications');
-
-    final response = await _authorizedGet(uri);
-    final decoded = _decodeResponse(response.body);
-
-    if (response.statusCode != 200) {
-      final message = decoded is Map && decoded['message'] != null
-          ? decoded['message'].toString()
-          : 'Failed to fetch notifications.';
-
-      if (response.statusCode == 401 || response.statusCode == 403) {
-        throw _AuthRequiredException(
-          message.trim().isNotEmpty
-              ? message
-              : 'Session expired. Please login again.',
-        );
-      }
-
-      throw Exception(message);
-    }
-
-    List dataList = [];
-
-    if (decoded is Map && decoded['data'] is List) {
-      dataList = decoded['data'] as List;
-    } else if (decoded is List) {
-      dataList = decoded;
-    }
-
-    final notifications = dataList
-        .whereType<Map>()
-        .map(
-          (item) => VolunteerNotificationModel.fromMap(
-            Map<String, dynamic>.from(item),
-          ),
-        )
-        .toList();
-
-    notifications.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-
-    return notifications;
-  }
-
-  dynamic _decodeResponse(String body) {
-    try {
-      return jsonDecode(body);
-    } catch (_) {
-      return {};
-    }
+    return VolunteerNotificationSdk.fetchNotifications();
   }
 
   Future<void> _markAsRead(String notificationId) async {
     if (notificationId.isEmpty) return;
 
     try {
-      final uri = Uri.parse(
-        '$_baseUrl/volunteer/notifications/${Uri.encodeComponent(notificationId)}/read',
-      );
-
-      await _authorizedPatch(uri);
+      await VolunteerNotificationSdk.markAsRead(notificationId);
     } catch (_) {
       // Silent fail. Detail screen should still open.
     }
@@ -210,7 +69,7 @@ class _VolunteerNotificationPageState extends State<VolunteerNotificationPage> {
       MaterialPageRoute(
         builder: (_) => VolunteerNotificationDetailPage(
           notification: notification,
-          authToken: _token,
+          authToken: widget.authToken,
         ),
       ),
     );
@@ -225,23 +84,20 @@ class _VolunteerNotificationPageState extends State<VolunteerNotificationPage> {
   bool _isAuthError(Object error) {
     final message = error.toString().toLowerCase();
 
-    return error is _AuthRequiredException ||
-        message.contains('authorization') ||
-        message.contains('token') ||
-        message.contains('expired') ||
+    return message.contains('session') ||
+        message.contains('login') ||
+        message.contains('volunteer profile') ||
+        message.contains('permission') ||
         message.contains('unauthenticated') ||
         message.contains('invalid');
   }
 
-  void _goToLogin() async {
-    await _VolunteerAuthTokenHelper.clearSavedTokens();
-
+  void _goToLogin() {
     if (!mounted) return;
 
-    Navigator.of(context).pushNamedAndRemoveUntil(
-      '/volunteer-login',
-      (route) => false,
-    );
+    Navigator.of(
+      context,
+    ).pushNamedAndRemoveUntil('/volunteer-login', (route) => false);
   }
 
   @override
@@ -254,10 +110,7 @@ class _VolunteerNotificationPageState extends State<VolunteerNotificationPage> {
         centerTitle: true,
         title: const Text(
           'Volunteer Notifications',
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w700,
-          ),
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
         ),
         iconTheme: const IconThemeData(color: Colors.white),
       ),
@@ -266,9 +119,7 @@ class _VolunteerNotificationPageState extends State<VolunteerNotificationPage> {
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(
-              child: CircularProgressIndicator(
-                color: _maroon,
-              ),
+              child: CircularProgressIndicator(color: _maroon),
             );
           }
 
@@ -276,7 +127,10 @@ class _VolunteerNotificationPageState extends State<VolunteerNotificationPage> {
             final isAuthError = _isAuthError(snapshot.error!);
 
             return _ErrorView(
-              message: snapshot.error.toString().replaceFirst('Exception: ', ''),
+              message: snapshot.error.toString().replaceFirst(
+                'Exception: ',
+                '',
+              ),
               onRetry: () {
                 setState(() {
                   _notificationsFuture = _fetchNotifications();
@@ -317,7 +171,9 @@ class _VolunteerNotificationPageState extends State<VolunteerNotificationPage> {
             );
           }
 
-          final unreadCount = notifications.where((item) => !item.isRead).length;
+          final unreadCount = notifications
+              .where((item) => !item.isRead)
+              .length;
 
           return RefreshIndicator(
             color: _maroon,
@@ -329,9 +185,7 @@ class _VolunteerNotificationPageState extends State<VolunteerNotificationPage> {
                   padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
                   decoration: const BoxDecoration(
                     color: Colors.white,
-                    border: Border(
-                      bottom: BorderSide(color: _borderColor),
-                    ),
+                    border: Border(bottom: BorderSide(color: _borderColor)),
                   ),
                   child: Row(
                     children: [
@@ -424,8 +278,9 @@ class _VolunteerNotificationPageState extends State<VolunteerNotificationPage> {
                                         height: 11,
                                         decoration: BoxDecoration(
                                           color: _maroon,
-                                          borderRadius:
-                                              BorderRadius.circular(20),
+                                          borderRadius: BorderRadius.circular(
+                                            20,
+                                          ),
                                           border: Border.all(
                                             color: Colors.white,
                                             width: 2,
@@ -529,9 +384,6 @@ class VolunteerNotificationDetailPage extends StatefulWidget {
 
 class _VolunteerNotificationDetailPageState
     extends State<VolunteerNotificationDetailPage> {
-  static const String _baseUrl =
-      'https://manliness-smugness-qualm.ngrok-free.dev/api';
-
   static const Color _maroon = Color(0xFF7B1020);
   static const Color _maroonDark = Color(0xFF5C0B17);
   static const Color _softWhite = Color(0xFFFAF7F8);
@@ -545,97 +397,8 @@ class _VolunteerNotificationDetailPageState
     _detailFuture = _loadDetail();
   }
 
-  Future<String?> _getToken({bool forceRefresh = false}) async {
-    try {
-      return await _VolunteerAuthTokenHelper.getToken(
-        providedToken: widget.authToken,
-        forceRefresh: forceRefresh,
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Map<String, String> _headers(String? token) {
-    final headers = {
-      'Accept': 'application/json',
-      'Content-Type': 'application/json',
-      'ngrok-skip-browser-warning': 'true',
-    };
-
-    if (token != null && token.trim().isNotEmpty) {
-      headers['Authorization'] = 'Bearer ${token.trim()}';
-    }
-
-    return headers;
-  }
-
-  Future<http.Response> _authorizedGet(Uri uri) async {
-    final token = await _getToken();
-
-    http.Response response = await http
-        .get(
-          uri,
-          headers: _headers(token),
-        )
-        .timeout(const Duration(seconds: 25));
-
-    if (response.statusCode == 401 || response.statusCode == 403) {
-      try {
-        final freshToken = await _getToken(forceRefresh: true);
-
-        response = await http
-            .get(
-              uri,
-              headers: _headers(freshToken),
-            )
-            .timeout(const Duration(seconds: 25));
-      } catch (_) {
-        // Keep original response if refresh is not possible.
-      }
-    }
-
-    return response;
-  }
-
   Future<Map<String, dynamic>> _loadDetail() async {
-    final notificationMap = Map<String, dynamic>.from(widget.notification.raw);
-    final eventId = widget.notification.eventId;
-
-    if (eventId.isEmpty) {
-      return notificationMap;
-    }
-
-    try {
-      final uri = Uri.parse(
-        '$_baseUrl/admin/events/${Uri.encodeComponent(eventId)}',
-      );
-
-      final response = await _authorizedGet(uri);
-
-      if (response.statusCode != 200) {
-        return notificationMap;
-      }
-
-      final decoded = jsonDecode(response.body);
-
-      Map<String, dynamic> eventMap = {};
-
-      if (decoded is Map && decoded['data'] is Map) {
-        eventMap = Map<String, dynamic>.from(decoded['data']);
-      } else if (decoded is Map && decoded['event'] is Map) {
-        eventMap = Map<String, dynamic>.from(decoded['event']);
-      } else if (decoded is Map) {
-        eventMap = Map<String, dynamic>.from(decoded);
-      }
-
-      return {
-        ...notificationMap,
-        ...eventMap,
-      };
-    } catch (_) {
-      return notificationMap;
-    }
+    return VolunteerNotificationSdk.loadNotificationDetail(widget.notification);
   }
 
   String _first(Map<String, dynamic> map, List<String> keys) {
@@ -646,7 +409,7 @@ class _VolunteerNotificationDetailPageState
 
       final text = value.toString().trim();
 
-      if (text.isNotEmpty && text != 'null') {
+      if (text.isNotEmpty && text.toLowerCase() != 'null') {
         return text;
       }
     }
@@ -686,10 +449,7 @@ class _VolunteerNotificationDetailPageState
         elevation: 0,
         title: const Text(
           'Notification Detail',
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w700,
-          ),
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
         ),
         iconTheme: const IconThemeData(color: Colors.white),
       ),
@@ -698,9 +458,7 @@ class _VolunteerNotificationDetailPageState
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(
-              child: CircularProgressIndicator(
-                color: _maroon,
-              ),
+              child: CircularProgressIndicator(color: _maroon),
             );
           }
 
@@ -708,36 +466,51 @@ class _VolunteerNotificationDetailPageState
 
           final title = _first(data, [
             'event_title',
+            'eventTitle',
             'blood_bank_title',
+            'bloodBankTitle',
             'blood_bank_name',
+            'bloodBankName',
             'hospital_name',
+            'hospitalName',
             'title',
             'name',
           ]);
 
           final imageUrl = _first(data, [
             'image_url',
+            'imageUrl',
             'event_image_url',
+            'eventImageUrl',
             'event_image',
+            'eventImage',
             'image',
             'img_url',
+            'imgUrl',
             'banner_url',
+            'bannerUrl',
             'banner',
             'photo_url',
+            'photoUrl',
             'thumbnail',
             'cloudinary_url',
+            'cloudinaryUrl',
             'secure_url',
+            'secureUrl',
           ]);
 
           final message = _first(data, [
             'message',
             'short_message',
+            'shortMessage',
           ]);
 
           final description = _first(data, [
             'description',
             'event_description',
+            'eventDescription',
             'case_description',
+            'caseDescription',
             'details',
             'detail',
           ]);
@@ -745,21 +518,31 @@ class _VolunteerNotificationDetailPageState
           final organizer = _first(data, [
             'organizer',
             'organizer_name',
+            'organizerName',
             'admin_name',
+            'adminName',
             'created_by',
+            'createdBy',
           ]);
 
           final bloodBank = _first(data, [
             'blood_bank_title',
+            'bloodBankTitle',
             'blood_bank_name',
+            'bloodBankName',
             'hospital_name',
+            'hospitalName',
             'bank_name',
+            'bankName',
           ]);
 
           final bloodGroup = _first(data, [
             'blood_group',
+            'bloodGroup',
             'blood_type',
+            'bloodType',
             'required_blood_group',
+            'requiredBloodGroup',
           ]);
 
           final location = _first(data, [
@@ -772,30 +555,33 @@ class _VolunteerNotificationDetailPageState
           final date = _first(data, [
             'date',
             'event_date',
+            'eventDate',
             'created_at',
+            'createdAt',
           ]);
 
-          final time = _first(data, [
-            'time',
-            'event_time',
-          ]);
+          final time = _first(data, ['time', 'event_time', 'eventTime']);
 
           final phone = _first(data, [
             'phone',
             'phone_number',
+            'phoneNumber',
             'contact',
             'contact_number',
+            'contactNumber',
             'mobile',
           ]);
 
           final status = _first(data, [
             'status',
             'event_status',
+            'eventStatus',
           ]);
 
           final type = _first(data, [
             'type',
             'notification_type',
+            'notificationType',
           ]);
 
           return SingleChildScrollView(
@@ -811,9 +597,6 @@ class _VolunteerNotificationDetailPageState
                       width: double.infinity,
                       height: 220,
                       fit: BoxFit.cover,
-                      headers: const {
-                        'ngrok-skip-browser-warning': 'true',
-                      },
                       errorBuilder: (_, __, ___) => _ImagePlaceholder(),
                     ),
                   )
@@ -965,370 +748,11 @@ class _VolunteerNotificationDetailPageState
   }
 }
 
-class VolunteerNotificationModel {
-  final String notificationId;
-  final String eventId;
-  final String title;
-  final String message;
-  final String bloodBankTitle;
-  final String eventTitle;
-  final String bloodGroup;
-  final String location;
-  final DateTime createdAt;
-  final bool isRead;
-  final Map<String, dynamic> raw;
-
-  VolunteerNotificationModel({
-    required this.notificationId,
-    required this.eventId,
-    required this.title,
-    required this.message,
-    required this.bloodBankTitle,
-    required this.eventTitle,
-    required this.bloodGroup,
-    required this.location,
-    required this.createdAt,
-    required this.isRead,
-    required this.raw,
-  });
-
-  factory VolunteerNotificationModel.fromMap(Map<String, dynamic> map) {
-    final flatMap = <String, dynamic>{...map};
-
-    if (map['data'] is Map) {
-      flatMap.addAll(Map<String, dynamic>.from(map['data']));
-    }
-
-    String first(List<String> keys) {
-      for (final key in keys) {
-        final value = flatMap[key];
-
-        if (value == null) continue;
-
-        final text = value.toString().trim();
-
-        if (text.isNotEmpty && text != 'null') {
-          return text;
-        }
-      }
-
-      return '';
-    }
-
-    DateTime parseDate() {
-      final rawDate = first([
-        'created_at',
-        'date',
-        'event_date',
-      ]);
-
-      final parsed = DateTime.tryParse(rawDate);
-      return parsed ?? DateTime.fromMillisecondsSinceEpoch(0);
-    }
-
-    bool parseRead() {
-      final value = flatMap['is_read'];
-
-      if (value is bool) return value;
-
-      if (value is String) {
-        return value.toLowerCase() == 'true' || value == '1';
-      }
-
-      if (value is num) {
-        return value == 1;
-      }
-
-      return false;
-    }
-
-    return VolunteerNotificationModel(
-      notificationId: first([
-        'notification_id',
-        'id',
-        'doc_id',
-      ]),
-      eventId: first([
-        'event_id',
-        'eventId',
-      ]),
-      title: first([
-        'title',
-        'notification_title',
-      ]),
-      message: first([
-        'message',
-        'body',
-        'description',
-      ]),
-      bloodBankTitle: first([
-        'blood_bank_title',
-        'blood_bank_name',
-        'hospital_name',
-        'bank_name',
-      ]),
-      eventTitle: first([
-        'event_title',
-        'event_name',
-      ]),
-      bloodGroup: first([
-        'blood_group',
-        'blood_type',
-        'required_blood_group',
-      ]),
-      location: first([
-        'location',
-        'address',
-        'city',
-        'venue',
-      ]),
-      createdAt: parseDate(),
-      isRead: parseRead(),
-      raw: flatMap,
-    );
-  }
-
-  String get displayTitle {
-    if (bloodBankTitle.isNotEmpty) return bloodBankTitle;
-    if (eventTitle.isNotEmpty) return eventTitle;
-    if (title.isNotEmpty) return title;
-    return 'Blood Notification';
-  }
-
-  String get readableDate {
-    if (createdAt.millisecondsSinceEpoch == 0) return '';
-
-    final day = createdAt.day.toString().padLeft(2, '0');
-    final month = createdAt.month.toString().padLeft(2, '0');
-    final year = createdAt.year.toString();
-
-    return '$day-$month-$year';
-  }
-}
-
-class _VolunteerAuthTokenHelper {
-  static const List<String> _tokenKeys = [
-    'auth_token',
-    'volunteer_auth_token',
-    'volunteer_token',
-    'token',
-    'idToken',
-    'id_token',
-    'firebase_token',
-    'firebase_id_token',
-    'access_token',
-    'bearer_token',
-  ];
-
-  static Future<String> getToken({
-    String? providedToken,
-    bool forceRefresh = false,
-  }) async {
-    final prefs = await SharedPreferences.getInstance();
-
-    final directToken = _cleanToken(providedToken);
-
-    if (directToken != null) {
-      await _saveToken(prefs, directToken);
-      return directToken;
-    }
-
-    if (!forceRefresh) {
-      final savedToken = _readSavedToken(prefs);
-
-      if (savedToken != null) {
-        return savedToken;
-      }
-    }
-
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-
-      if (user != null) {
-        final firebaseToken = await user.getIdToken(forceRefresh);
-        final tokenText = (firebaseToken ?? '').trim();
-
-        if (tokenText.isNotEmpty) {
-          await _saveToken(prefs, tokenText);
-          return tokenText;
-        }
-      }
-    } catch (_) {
-      // Continue to final auth error.
-    }
-
-    throw _AuthRequiredException(
-      'Session not found. Please login again.',
-    );
-  }
-
-  static String? _readSavedToken(SharedPreferences prefs) {
-    for (final key in _tokenKeys) {
-      final value = prefs.getString(key);
-      final token = _cleanToken(value);
-
-      if (token != null) {
-        return token;
-      }
-    }
-
-    for (final key in prefs.getKeys()) {
-      final lowerKey = key.toLowerCase();
-
-      if (lowerKey.contains('token') ||
-          lowerKey.contains('bearer') ||
-          lowerKey.contains('authorization')) {
-        final value = prefs.get(key);
-
-        if (value is String) {
-          final token = _cleanToken(value);
-
-          if (token != null) {
-            return token;
-          }
-        }
-      }
-    }
-
-    for (final key in prefs.getKeys()) {
-      final value = prefs.get(key);
-
-      if (value is String) {
-        final token = _extractTokenFromJsonString(value);
-
-        if (token != null) {
-          return token;
-        }
-      }
-    }
-
-    return null;
-  }
-
-  static String? _extractTokenFromJsonString(String value) {
-    try {
-      final decoded = jsonDecode(value);
-      return _findTokenInDecoded(decoded);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  static String? _findTokenInDecoded(dynamic decoded) {
-    if (decoded is Map) {
-      for (final key in _tokenKeys) {
-        final value = decoded[key];
-
-        if (value is String) {
-          final token = _cleanToken(value);
-
-          if (token != null) {
-            return token;
-          }
-        }
-      }
-
-      for (final entry in decoded.entries) {
-        final keyText = entry.key.toString().toLowerCase();
-
-        if (keyText.contains('token') ||
-            keyText.contains('bearer') ||
-            keyText.contains('authorization')) {
-          if (entry.value is String) {
-            final token = _cleanToken(entry.value.toString());
-
-            if (token != null) {
-              return token;
-            }
-          }
-        }
-      }
-
-      for (final value in decoded.values) {
-        final token = _findTokenInDecoded(value);
-
-        if (token != null) {
-          return token;
-        }
-      }
-    }
-
-    if (decoded is List) {
-      for (final value in decoded) {
-        final token = _findTokenInDecoded(value);
-
-        if (token != null) {
-          return token;
-        }
-      }
-    }
-
-    if (decoded is String) {
-      final token = _cleanToken(decoded);
-
-      if (token != null && token.startsWith('eyJ')) {
-        return token;
-      }
-    }
-
-    return null;
-  }
-
-  static String? _cleanToken(String? value) {
-    if (value == null) return null;
-
-    String token = value.trim();
-
-    if (token.isEmpty || token == 'null') {
-      return null;
-    }
-
-    if (token.toLowerCase().startsWith('bearer ')) {
-      token = token.substring(7).trim();
-    }
-
-    if (token.length < 20) {
-      return null;
-    }
-
-    return token;
-  }
-
-  static Future<void> _saveToken(
-    SharedPreferences prefs,
-    String token,
-  ) async {
-    await prefs.setString('auth_token', token);
-    await prefs.setString('idToken', token);
-    await prefs.setString('firebase_token', token);
-  }
-
-  static Future<void> clearSavedTokens() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    for (final key in _tokenKeys) {
-      await prefs.remove(key);
-    }
-  }
-}
-
-class _AuthRequiredException implements Exception {
-  final String message;
-
-  const _AuthRequiredException(this.message);
-
-  @override
-  String toString() => message;
-}
-
 class _SmallChip extends StatelessWidget {
   final String text;
   final IconData icon;
 
-  const _SmallChip({
-    required this.text,
-    required this.icon,
-  });
+  const _SmallChip({required this.text, required this.icon});
 
   @override
   Widget build(BuildContext context) {
@@ -1343,11 +767,7 @@ class _SmallChip extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            icon,
-            size: 13,
-            color: maroon,
-          ),
+          Icon(icon, size: 13, color: maroon),
           const SizedBox(width: 4),
           Text(
             text,
@@ -1367,17 +787,16 @@ class _DetailCard extends StatelessWidget {
   final String title;
   final List<Widget> children;
 
-  const _DetailCard({
-    required this.title,
-    required this.children,
-  });
+  const _DetailCard({required this.title, required this.children});
 
   @override
   Widget build(BuildContext context) {
     const Color maroonDark = Color(0xFF5C0B17);
     const Color borderColor = Color(0xFFEAD8DC);
 
-    final visibleChildren = children.where((item) => item is! SizedBox).toList();
+    final visibleChildren = children
+        .where((item) => item is! SizedBox)
+        .toList();
 
     return Container(
       width: double.infinity,
@@ -1402,10 +821,7 @@ class _DetailCard extends StatelessWidget {
           if (visibleChildren.isEmpty)
             const Text(
               'No extra information available.',
-              style: TextStyle(
-                color: Colors.black54,
-                fontSize: 14,
-              ),
+              style: TextStyle(color: Colors.black54, fontSize: 14),
             )
           else
             ...visibleChildren,
@@ -1442,11 +858,7 @@ class _DetailRow extends StatelessWidget {
               color: maroon.withOpacity(0.08),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(
-              icon,
-              color: maroon,
-              size: 21,
-            ),
+            child: Icon(icon, color: maroon, size: 21),
           ),
           const SizedBox(width: 11),
           Expanded(
@@ -1491,18 +903,12 @@ class _ImagePlaceholder extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: const Color(0xFFEAD8DC),
-        ),
+        border: Border.all(color: const Color(0xFFEAD8DC)),
       ),
       child: const Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.bloodtype_rounded,
-            size: 64,
-            color: maroon,
-          ),
+          Icon(Icons.bloodtype_rounded, size: 64, color: maroon),
           SizedBox(height: 10),
           Text(
             'Blood Connect Notification',
@@ -1539,11 +945,7 @@ class _ErrorView extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.error_outline_rounded,
-              color: maroon,
-              size: 62,
-            ),
+            const Icon(Icons.error_outline_rounded, color: maroon, size: 62),
             const SizedBox(height: 14),
             Text(
               message,
@@ -1578,9 +980,7 @@ class _ErrorView extends StatelessWidget {
                 onPressed: onLogin,
                 icon: const Icon(Icons.login_rounded),
                 label: const Text('Login Again'),
-                style: TextButton.styleFrom(
-                  foregroundColor: maroon,
-                ),
+                style: TextButton.styleFrom(foregroundColor: maroon),
               ),
             ],
           ],

@@ -14,11 +14,11 @@ import 'Donor_Profile_Screen.dart';
 import 'Donor_Blood_Donate_Screen.dart';
 import 'Public_Request_Nearby.dart';
 import 'Donor_Find_Volunteer_Screen.dart';
-import 'Donor_Notification_Screen.dart';
+import 'donor_notification_screen.dart';
 import 'Donor_Search_Screen.dart';
-import 'Certificate_Screen.dart';
-// import 'Forget_Password.dart';
-import 'Sos.dart';
+// import 'Certificate_Screen.dart';
+
+
 
 class DonorHomeScreen extends StatefulWidget {
   static const String routeName = '/home';

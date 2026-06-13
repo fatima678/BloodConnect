@@ -1,13 +1,13 @@
 // lib/screens/Volunteer/Volunteer_Login_Screen.dart
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 
 import '../../theme.dart';
-import '../../../routes.dart';
-import '../../../services/auth_token_service.dart';
+import '../../routes.dart';
+import '../../sdk/auth/auth_sdk.dart';
+import '../../sdk/core/sdk_exception.dart';
 
 class VolunteerLoginScreen extends StatefulWidget {
   const VolunteerLoginScreen({super.key});
@@ -23,187 +23,178 @@ class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
   bool isLoading = false;
   bool _obscurePassword = true;
 
-  Future<bool> _saveFcmTokenToBackend() async {
+  void showMessage({
+    required String message,
+    Color backgroundColor = Colors.red,
+  }) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: backgroundColor,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<String?> _getFcmToken() async {
     try {
-      final settings = await FirebaseMessaging.instance.requestPermission();
+      final settings = await FirebaseMessaging.instance.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
 
-      debugPrint("FCM Permission: ${settings.authorizationStatus}");
+      debugPrint("VOLUNTEER FCM Permission: ${settings.authorizationStatus}");
 
-      final String? fcmToken = await FirebaseMessaging.instance.getToken();
+      await FirebaseMessaging.instance.setAutoInitEnabled(true);
 
-      debugPrint("FCM Token: $fcmToken");
+      String? fcmToken = await FirebaseMessaging.instance.getToken();
 
-      if (fcmToken == null || fcmToken.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text("FCM token not found.")));
-        }
-        return false;
+      if (fcmToken == null || fcmToken.trim().isEmpty) {
+        await Future.delayed(const Duration(seconds: 2));
+        fcmToken = await FirebaseMessaging.instance.getToken();
       }
 
-      final response = await AuthTokenService.authorizedPost('/fcm-token', {
-        'fcm_token': fcmToken,
-        'device_type': 'android',
-      });
+      debugPrint("VOLUNTEER FCM Token: $fcmToken");
 
-      debugPrint("FCM Save Status: ${response.statusCode}");
-      debugPrint("FCM Save Body: ${response.body}");
-
-      Map<String, dynamic> responseBody = {};
-
-      try {
-        responseBody = jsonDecode(response.body);
-      } catch (_) {
-        responseBody = {};
+      if (fcmToken == null || fcmToken.trim().isEmpty) {
+        return null;
       }
 
-      if (response.statusCode == 200 && responseBody['success'] == true) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("FCM token saved successfully."),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-        return true;
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              responseBody['message'] ?? "Failed to save FCM token.",
-            ),
-          ),
-        );
-      }
-
-      return false;
+      return fcmToken.trim();
     } catch (e) {
-      debugPrint("FCM Save Error: $e");
-
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("FCM save error: $e")));
-      }
-
-      return false;
+      debugPrint("VOLUNTEER FCM Token Error: $e");
+      return null;
     }
   }
 
   Future<void> loginVolunteer() async {
-    final String email = emailController.text.trim();
+    FocusScope.of(context).unfocus();
+
+    final String email = emailController.text.trim().toLowerCase();
     final String password = passwordController.text.trim();
 
     if (email.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Please fill all fields")));
+      showMessage(message: "Please fill all fields");
       return;
     }
 
     setState(() => isLoading = true);
 
     try {
-      final response = await http
-          .post(
-            Uri.parse('${AuthTokenService.baseUrl}/login'),
-            headers: {
-              'Accept': 'application/json',
-              'Content-Type': 'application/json',
-              'ngrok-skip-browser-warning': 'true',
-            },
-            body: jsonEncode({'email': email, 'password': password}),
-          )
-          .timeout(const Duration(seconds: 15));
+      final user = await AuthSdk.login(
+        email: email,
+        password: password,
+        expectedRole: 'team_volunteer',
+      );
 
-      final Map<String, dynamic> data = jsonDecode(response.body);
+      final firebaseUser = FirebaseAuth.instance.currentUser;
 
-      if (!mounted) return;
+      if (firebaseUser == null) {
+        throw const SdkException('Login session not found.');
+      }
 
-      if (response.statusCode != 200 || data['success'] != true) {
+      await firebaseUser.reload();
+
+      final refreshedUser = FirebaseAuth.instance.currentUser;
+
+      if (refreshedUser == null) {
+        throw const SdkException('Login session not found.');
+      }
+
+      if (!refreshedUser.emailVerified) {
+        try {
+          await refreshedUser.sendEmailVerification();
+        } catch (_) {}
+
+        if (!mounted) return;
+
         setState(() => isLoading = false);
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(data['message'] ?? "Invalid Email or Password"),
-          ),
+        showMessage(
+          message: 'Please verify your email first. Verification email sent.',
+          backgroundColor: Colors.orange,
+        );
+
+        await Future.delayed(const Duration(milliseconds: 700));
+
+        if (!mounted) return;
+
+        Navigator.pushReplacementNamed(
+          context,
+          AppRoutes.volunteerVerifyEmail,
         );
         return;
       }
 
-      final String? token = data['token'];
-      final String? refreshToken = data['refresh_token'];
-      final Map<String, dynamic>? userData = data['data'];
+      final String? fcmToken = await _getFcmToken();
 
-      if (token == null || refreshToken == null || userData == null) {
-        setState(() => isLoading = false);
+      bool fcmTokenSaved = false;
 
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text("Login data incomplete")));
-        return;
+      if (fcmToken != null && fcmToken.isNotEmpty) {
+        await AuthSdk.saveFcmTokenForUser(
+          user: user,
+          fcmToken: fcmToken,
+          deviceType: 'android',
+        );
+
+        fcmTokenSaved = true;
       }
 
-      await AuthTokenService.saveSession(
-        token: token,
-        refreshToken: refreshToken,
-        expiresIn: int.tryParse('${data['expires_in'] ?? 3600}') ?? 3600,
-        user: userData,
-      );
-
-      debugPrint("LOGIN SUCCESS - NOW SAVING FCM TOKEN");
-
-      final bool fcmSaved = await _saveFcmTokenToBackend();
-
-      debugPrint("FCM FUNCTION COMPLETED: $fcmSaved");
+      debugPrint("VOLUNTEER LOGIN SUCCESS");
+      debugPrint("VOLUNTEER FCM TOKEN SAVED: $fcmTokenSaved");
 
       if (!mounted) return;
 
       setState(() => isLoading = false);
 
-      if (!fcmSaved) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Login successful, but FCM token was not saved."),
-          ),
+      if (!fcmTokenSaved) {
+        showMessage(
+          message: "Login successful, but notification token was not saved.",
+          backgroundColor: Colors.orange,
         );
+
+        await Future.delayed(const Duration(milliseconds: 500));
       }
 
-      final String role = (userData['role'] ?? '')
-          .toString()
-          .toLowerCase()
-          .trim();
+      if (!mounted) return;
 
-      if (role == "patient" || role == "donor" || role == "patient_donor") {
-        Navigator.pushReplacementNamed(context, AppRoutes.patientHome);
-      } else if (role == "team_volunteer" || role == "volunteer") {
-        Navigator.pushReplacementNamed(context, AppRoutes.volunteerDashboard);
-      } else {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text("Invalid user role")));
-      }
+      Navigator.pushReplacementNamed(context, AppRoutes.volunteerDashboard);
+    } on SdkException catch (e) {
+      if (!mounted) return;
+
+      setState(() => isLoading = false);
+
+      showMessage(message: e.message);
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+
+      setState(() => isLoading = false);
+
+      showMessage(message: e.message ?? 'Login failed. Please try again.');
     } catch (e) {
-      if (mounted) {
-        setState(() => isLoading = false);
+      if (!mounted) return;
 
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("Connection Error: $e")));
-      }
+      setState(() => isLoading = false);
+
+      debugPrint("Volunteer login unknown error: $e");
+
+      showMessage(message: "Login failed. Please try again.");
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    debugPrint("LOGIN SCREEN BUILD RUNNING");
+    debugPrint("VOLUNTEER LOGIN SCREEN BUILD RUNNING");
 
     return Scaffold(
+      backgroundColor: const Color(0xFF8B0000),
       body: Container(
+        width: double.infinity,
+        height: double.infinity,
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
@@ -213,13 +204,13 @@ class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
         ),
         child: SafeArea(
           child: SingleChildScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Column(
                 children: [
                   const SizedBox(height: 20),
 
-                  // Back Button to Role Selection Screen
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Container(
@@ -233,16 +224,18 @@ class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
                           color: Colors.white,
                           size: 20,
                         ),
-                        onPressed: () {
-                          if (Navigator.canPop(context)) {
-                            Navigator.pop(context);
-                          } else {
-                            Navigator.pushReplacementNamed(
-                              context,
-                              AppRoutes.roleSelection,
-                            );
-                          }
-                        },
+                        onPressed: isLoading
+                            ? null
+                            : () {
+                                if (Navigator.canPop(context)) {
+                                  Navigator.pop(context);
+                                } else {
+                                  Navigator.pushReplacementNamed(
+                                    context,
+                                    AppRoutes.roleSelection,
+                                  );
+                                }
+                              },
                       ),
                     ),
                   ),
@@ -271,7 +264,10 @@ class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
                     ),
                     child: const Text(
                       "Logging in as Volunteer",
-                      style: TextStyle(color: Colors.white, fontSize: 16.5),
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16.5,
+                      ),
                     ),
                   ),
 
@@ -285,34 +281,33 @@ class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
                     child: Row(
                       children: [
                         Expanded(
-                          child: GestureDetector(
-                            onTap: () {},
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              decoration: const BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.horizontal(
-                                  left: Radius.circular(30),
-                                ),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            decoration: const BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.horizontal(
+                                left: Radius.circular(30),
                               ),
-                              child: const Text(
-                                "Login",
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF6B0000),
-                                ),
+                            ),
+                            child: const Text(
+                              "Login",
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF6B0000),
                               ),
                             ),
                           ),
                         ),
                         Expanded(
                           child: GestureDetector(
-                            onTap: () => Navigator.pushReplacementNamed(
-                              context,
-                              AppRoutes.volunteerRegister,
-                            ),
+                            onTap: isLoading
+                                ? null
+                                : () => Navigator.pushReplacementNamed(
+                                      context,
+                                      AppRoutes.volunteerRegister,
+                                    ),
                             child: Container(
                               padding: const EdgeInsets.symmetric(vertical: 14),
                               child: const Text(
@@ -357,6 +352,8 @@ class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
                           hint: "Email Address",
                           icon: Icons.alternate_email,
                           controller: emailController,
+                          keyboardType: TextInputType.emailAddress,
+                          textInputAction: TextInputAction.next,
                         ),
 
                         const SizedBox(height: 16),
@@ -366,6 +363,13 @@ class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
                           icon: Icons.lock_outline,
                           controller: passwordController,
                           isPassword: true,
+                          keyboardType: TextInputType.visiblePassword,
+                          textInputAction: TextInputAction.done,
+                          onSubmitted: (_) {
+                            if (!isLoading) {
+                              loginVolunteer();
+                            }
+                          },
                         ),
 
                         const SizedBox(height: 8),
@@ -373,11 +377,12 @@ class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
                         Align(
                           alignment: Alignment.centerRight,
                           child: TextButton(
-                            onPressed: () => Navigator.pushNamed(
-                              context,
-                              AppRoutes
-                                  .volunteerSettings, // Assuming dynamic catch destination helper maps here
-                            ),
+                            onPressed: isLoading
+                                ? null
+                                : () => Navigator.pushNamed(
+                                      context,
+                                      AppRoutes.volunteerSettings,
+                                    ),
                             child: const Text(
                               "Forgot Password?",
                               style: TextStyle(
@@ -396,14 +401,21 @@ class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
                           child: ElevatedButton(
                             style: ElevatedButton.styleFrom(
                               backgroundColor: primaryMaroon,
+                              disabledBackgroundColor:
+                                  primaryMaroon.withOpacity(0.65),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(18),
                               ),
                             ),
                             onPressed: isLoading ? null : loginVolunteer,
                             child: isLoading
-                                ? const CircularProgressIndicator(
-                                    color: whiteColor,
+                                ? const SizedBox(
+                                    width: 24,
+                                    height: 24,
+                                    child: CircularProgressIndicator(
+                                      color: whiteColor,
+                                      strokeWidth: 2.5,
+                                    ),
                                   )
                                 : const Text(
                                     "LOGIN",
@@ -422,10 +434,12 @@ class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
                   const SizedBox(height: 40),
 
                   GestureDetector(
-                    onTap: () => Navigator.pushNamed(
-                      context,
-                      AppRoutes.helpSupport,
-                    ), // Preservation of navigation line
+                    onTap: isLoading
+                        ? null
+                        : () => Navigator.pushNamed(
+                              context,
+                              AppRoutes.helpSupport,
+                            ),
                     child: const Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -450,13 +464,18 @@ class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
                     children: [
                       const Text(
                         "New user? ",
-                        style: TextStyle(fontSize: 15.5, color: whiteColor70),
+                        style: TextStyle(
+                          fontSize: 15.5,
+                          color: whiteColor70,
+                        ),
                       ),
                       GestureDetector(
-                        onTap: () => Navigator.pushReplacementNamed(
-                          context,
-                          AppRoutes.volunteerRegister,
-                        ),
+                        onTap: isLoading
+                            ? null
+                            : () => Navigator.pushReplacementNamed(
+                                  context,
+                                  AppRoutes.volunteerRegister,
+                                ),
                         child: const Text(
                           "Register",
                           style: TextStyle(
@@ -468,6 +487,8 @@ class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
                       ),
                     ],
                   ),
+
+                  const SizedBox(height: 30),
                 ],
               ),
             ),
@@ -482,6 +503,9 @@ class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
     required IconData icon,
     required TextEditingController controller,
     bool isPassword = false,
+    TextInputType keyboardType = TextInputType.text,
+    TextInputAction textInputAction = TextInputAction.next,
+    void Function(String)? onSubmitted,
   }) {
     return Container(
       decoration: BoxDecoration(
@@ -491,6 +515,10 @@ class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
       child: TextField(
         controller: controller,
         obscureText: isPassword && _obscurePassword,
+        keyboardType: keyboardType,
+        textInputAction: textInputAction,
+        enabled: !isLoading,
+        onSubmitted: onSubmitted,
         decoration: InputDecoration(
           prefixIcon: Icon(icon, color: primaryMaroon),
           hintText: hint,
@@ -500,6 +528,23 @@ class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
             vertical: 18,
             horizontal: 4,
           ),
+          suffixIcon: isPassword
+              ? IconButton(
+                  icon: Icon(
+                    _obscurePassword
+                        ? Icons.visibility_off
+                        : Icons.visibility,
+                    color: primaryMaroon,
+                  ),
+                  onPressed: isLoading
+                      ? null
+                      : () {
+                          setState(() {
+                            _obscurePassword = !_obscurePassword;
+                          });
+                        },
+                )
+              : null,
         ),
       ),
     );
