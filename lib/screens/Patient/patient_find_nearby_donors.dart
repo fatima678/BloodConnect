@@ -228,8 +228,10 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
   }
 
   double? _readDistanceKm(Map<String, dynamic> donor) {
-    final value =
-        donor["distance_km"] ?? donor["distanceKm"] ?? donor["distance"];
+    final value = donor["route_distance_km"] ??
+        donor["distance_km"] ??
+        donor["distanceKm"] ??
+        donor["distance"];
 
     if (value == null) return null;
 
@@ -470,6 +472,36 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     if (distance == null) return "N/A";
 
     return "${distance.toStringAsFixed(2)} km";
+  }
+
+  String _formatRouteDuration(Map<String, dynamic> donor) {
+    final secondsValue = donor['route_duration_seconds'];
+    final minutesValue = donor['route_duration_min'];
+
+    final int? seconds = int.tryParse(secondsValue?.toString() ?? '');
+
+    if (seconds != null && seconds > 0) {
+      final int minutes = seconds ~/ 60;
+      final int remainingSeconds = seconds % 60;
+
+      if (minutes > 0 && remainingSeconds > 0) {
+        return '$minutes min $remainingSeconds sec';
+      }
+
+      if (minutes > 0) {
+        return '$minutes min';
+      }
+
+      return '$seconds sec';
+    }
+
+    final int? minutes = int.tryParse(minutesValue?.toString() ?? '');
+
+    if (minutes != null && minutes > 0) {
+      return '$minutes min';
+    }
+
+    return 'N/A';
   }
 
   String _formatLastDonation(dynamic value) {
@@ -1024,7 +1056,11 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
         ) ??
         "N/A";
 
-    final String distance = _formatDistance(donor["distance_km"]);
+    final String distance = _formatDistance(
+      donor["route_distance_km"] ?? donor["distance_km"],
+    );
+
+    final String drivingTime = _formatRouteDuration(donor);
 
     final String lastDonation = _formatLastDonation(
       donor["last_donated_date"],
@@ -1070,8 +1106,15 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                     ),
                   ),
                   _buildInfoRow(
-                    icon: Icons.social_distance,
-                    text: "$distance away",
+                    icon: Icons.route,
+                    text: "Road Distance: $distance",
+                    color: Colors.black87,
+                    fontWeight: FontWeight.w500,
+                    maxLines: 1,
+                  ),
+                  _buildInfoRow(
+                    icon: Icons.access_time,
+                    text: "Driving Time: $drivingTime",
                     color: Colors.black87,
                     fontWeight: FontWeight.w500,
                     maxLines: 1,

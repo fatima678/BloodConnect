@@ -1,10 +1,13 @@
 // lib/screens/volunteer_dashboard_screen.dart
-import 'dart:convert';
+
 import 'package:carousel_slider/carousel_slider.dart';
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:blood_donation_app/theme.dart';
 import 'package:blood_donation_app/routes.dart';
 import 'package:blood_donation_app/services/auth_token_service.dart';
+import 'package:blood_donation_app/sdk/volunteer/volunteer_banner_sdk.dart';
+import 'package:blood_donation_app/screens/Volunteer/Volunteer_Profile_Screen.dart';
 
 class VolunteerDashboardScreen extends StatefulWidget {
   const VolunteerDashboardScreen({super.key});
@@ -23,7 +26,7 @@ class _VolunteerDashboardScreenState extends State<VolunteerDashboardScreen> {
       const DashboardContent(),
       const Scaffold(body: Center(child: Text("Search Screen"))),
       const Scaffold(body: Center(child: Text("Notifications Screen"))),
-      const Scaffold(body: Center(child: Text("Profile Screen"))),
+      const VolunteerProfileScreen(),
     ];
 
     return WillPopScope(
@@ -95,35 +98,23 @@ class _DashboardContentState extends State<DashboardContent> {
 
   Future<void> _fetchBanners() async {
     try {
-      final response = await AuthTokenService.authorizedGet('/fetch-banners');
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['success'] == true && data['data'] != null) {
-          final List dynamicList = data['data'];
-          final List<String> loadedUrls = [];
-          for (var item in dynamicList) {
-            if (item is Map) {
-              if (item['image_url'] != null) {
-                loadedUrls.add(item['image_url'].toString());
-              } else if (item['url'] != null) {
-                loadedUrls.add(item['url'].toString());
-              } else if (item['image'] != null) {
-                loadedUrls.add(item['image'].toString());
-              }
-            }
-          }
-          if (loadedUrls.isNotEmpty) {
-            setState(() {
-              _carouselImages = loadedUrls;
-              _isLoadingBanners = false;
-            });
-            return;
-          }
-        }
+      final List<String> loadedUrls =
+          await VolunteerBannerSdk.fetchBannerImages();
+
+      if (!mounted) return;
+
+      if (loadedUrls.isNotEmpty) {
+        setState(() {
+          _carouselImages = loadedUrls;
+          _isLoadingBanners = false;
+        });
+        return;
       }
     } catch (e) {
-      debugPrint("Error fetching volunteer dashboard banners: $e");
+      debugPrint("Error fetching volunteer banners from Firestore SDK: $e");
     }
+
+    if (!mounted) return;
 
     setState(() {
       _carouselImages = [
@@ -196,7 +187,7 @@ class _DashboardContentState extends State<DashboardContent> {
                           final imagePathOrUrl = _carouselImages[index];
                           final isNetworkImage =
                               imagePathOrUrl.startsWith('http://') ||
-                              imagePathOrUrl.startsWith('https://');
+                                  imagePathOrUrl.startsWith('https://');
 
                           return isNetworkImage
                               ? Image.network(
@@ -205,13 +196,13 @@ class _DashboardContentState extends State<DashboardContent> {
                                   width: double.infinity,
                                   errorBuilder: (context, error, stackTrace) =>
                                       Container(
-                                        color: Colors.grey[300],
-                                        child: const Icon(
-                                          Icons.broken_image,
-                                          size: 60,
-                                          color: Colors.grey,
-                                        ),
-                                      ),
+                                    color: Colors.grey[300],
+                                    child: const Icon(
+                                      Icons.broken_image,
+                                      size: 60,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
                                   loadingBuilder:
                                       (context, child, loadingProgress) {
                                     if (loadingProgress == null) return child;
@@ -231,13 +222,13 @@ class _DashboardContentState extends State<DashboardContent> {
                                   width: double.infinity,
                                   errorBuilder: (context, error, stackTrace) =>
                                       Container(
-                                        color: Colors.grey[300],
-                                        child: const Icon(
-                                          Icons.broken_image,
-                                          size: 60,
-                                          color: Colors.grey,
-                                        ),
-                                      ),
+                                    color: Colors.grey[300],
+                                    child: const Icon(
+                                      Icons.broken_image,
+                                      size: 60,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
                                 );
                         },
                       ),
@@ -264,9 +255,7 @@ class _DashboardContentState extends State<DashboardContent> {
                   ),
               ],
             ),
-
             const SizedBox(height: 24),
-
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: GridView.count(
@@ -392,51 +381,6 @@ class _DashboardContentState extends State<DashboardContent> {
               padding: const EdgeInsets.symmetric(vertical: 8),
               children: [
                 _buildDrawerItem(
-                  Icons.dashboard,
-                  "Dashboard",
-                  onTap: () => Navigator.pop(context),
-                ),
-                _buildDrawerItem(
-                  Icons.bloodtype,
-                  "Blood Request Management",
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.pushNamed(context, '/blood-request-management');
-                  },
-                ),
-                _buildDrawerItem(
-                  Icons.people,
-                  "Donor Data",
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.pushNamed(context, '/donor-data');
-                  },
-                ),
-                _buildDrawerItem(
-                  Icons.card_giftcard,
-                  "Digital Certificate",
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.pushNamed(context, '/certificate-generation');
-                  },
-                ),
-                _buildDrawerItem(
-                  Icons.notifications,
-                  "Notifications",
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.pushNamed(context, '/notifications');
-                  },
-                ),
-                _buildDrawerItem(
-                  Icons.person,
-                  "My Profile",
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.pushNamed(context, '/volunteer-profile');
-                  },
-                ),
-                _buildDrawerItem(
                   Icons.settings,
                   "Settings",
                   onTap: () {
@@ -461,11 +405,16 @@ class _DashboardContentState extends State<DashboardContent> {
                   ),
                   onTap: () async {
                     Navigator.pop(context);
+
                     await AuthTokenService.clearSession();
+                    await FirebaseAuth.instance.signOut();
+
                     if (!mounted) return;
-                    Navigator.of(
-                      context,
-                    ).pushNamedAndRemoveUntil('/role-selection', (route) => false);
+
+                    Navigator.of(context).pushNamedAndRemoveUntil(
+                      '/role-selection',
+                      (route) => false,
+                    );
                   },
                 ),
               ],

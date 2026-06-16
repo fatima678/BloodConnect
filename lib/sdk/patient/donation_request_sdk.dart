@@ -1,10 +1,12 @@
 // lib/sdk/donation/donation_request_sdk.dart
 
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 
 import '../auth/auth_sdk.dart';
 import '../core/sdk_exception.dart';
@@ -29,6 +31,15 @@ class DonationRequestSdk {
   static const String donorRequestsCollection = 'donor_requests';
   static const String donationRequestsCollection = 'donation_requests';
   static const String donorNotificationsCollection = 'donor_notifications';
+
+  /*
+   * Google Routes API key.
+   * Replace this with your actual Google Maps API key.
+   *
+   * Required API:
+   * Google Routes API must be enabled in Google Cloud Console.
+   */
+  static const String googleRoutesApiKey = 'YOUR_GOOGLE_MAPS_API_KEY';
 
   static String _normalizeBloodGroup(dynamic value) {
     return value
@@ -81,6 +92,11 @@ class DonationRequestSdk {
     return degree * pi / 180;
   }
 
+  /*
+   * This is straight-line distance.
+   * Now this is used only as a pre-check / backup.
+   * Final displayed distance will come from Google Routes API.
+   */
   static double _distanceKm(
     double lat1,
     double lng1,
@@ -101,6 +117,184 @@ class DonationRequestSdk {
     final double c = 2 * atan2(sqrt(a), sqrt(1 - a));
 
     return double.parse((earthRadius * c).toStringAsFixed(2));
+  }
+
+  static int _parseGoogleDurationSeconds(dynamic value) {
+    if (value == null) return 0;
+
+    final text = value.toString().trim();
+
+    if (text.isEmpty) return 0;
+
+    final cleanText = text.endsWith('s')
+        ? text.substring(0, text.length - 1)
+        : text;
+
+    final parsed = double.tryParse(cleanText);
+
+    if (parsed == null) return 0;
+
+    return parsed.round();
+  }
+
+  static Future<List<Map<String, dynamic>>> _fetchGoogleRouteMatrix({
+    required double originLat,
+    required double originLng,
+    required List<Map<String, dynamic>> donors,
+  }) async {
+    if (googleRoutesApiKey.trim().isEmpty ||
+        googleRoutesApiKey == 'YOUR_GOOGLE_MAPS_API_KEY') {
+      throw const SdkException('Google Routes API key is missing.');
+    }
+
+    if (donors.isEmpty) {
+      return [];
+    }
+
+    final List<Map<String, dynamic>> updatedDonors =
+        donors.map((donor) => Map<String, dynamic>.from(donor)).toList();
+
+    /*
+     * Google Routes API Compute Route Matrix supports multiple destinations.
+     * To keep request size safe, we process donors in chunks.
+     */
+    const int chunkSize = 25;
+
+    for (int start = 0; start < updatedDonors.length; start += chunkSize) {
+      final int end = min(start + chunkSize, updatedDonors.length);
+      final List<Map<String, dynamic>> chunk = updatedDonors.sublist(
+        start,
+        end,
+      );
+
+      final destinations = chunk.map((donor) {
+        final double donorLat = donor['_donor_lat'] as double;
+        final double donorLng = donor['_donor_lng'] as double;
+
+        return {
+          'waypoint': {
+            'location': {
+              'latLng': {
+                'latitude': donorLat,
+                'longitude': donorLng,
+              },
+            },
+          },
+        };
+      }).toList();
+
+      final requestBody = {
+        'origins': [
+          {
+            'waypoint': {
+              'location': {
+                'latLng': {
+                  'latitude': originLat,
+                  'longitude': originLng,
+                },
+              },
+            },
+          },
+        ],
+        'destinations': destinations,
+        'travelMode': 'DRIVE',
+        'routingPreference': 'TRAFFIC_AWARE',
+      };
+
+      final response = await http.post(
+        Uri.parse(
+          'https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix',
+        ),
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': googleRoutesApiKey,
+          'X-Goog-FieldMask':
+              'originIndex,destinationIndex,status,condition,distanceMeters,duration',
+        },
+        body: jsonEncode(requestBody),
+      );
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        debugPrint('Google Routes API error: ${response.statusCode}');
+        debugPrint(response.body);
+
+        throw SdkException(
+          'Failed to calculate road route distance. Google API error ${response.statusCode}.',
+        );
+      }
+
+      final decoded = jsonDecode(response.body);
+
+      if (decoded is! List) {
+        throw const SdkException('Invalid Google Routes API response.');
+      }
+
+      for (final item in decoded) {
+        if (item is! Map) continue;
+
+        final int? destinationIndex = item['destinationIndex'] is int
+            ? item['destinationIndex'] as int
+            : int.tryParse(item['destinationIndex']?.toString() ?? '');
+
+        if (destinationIndex == null) continue;
+        if (destinationIndex < 0 || destinationIndex >= chunk.length) continue;
+
+        final dynamic status = item['status'];
+        final String statusCode = status is Map
+            ? status['code']?.toString() ?? ''
+            : '';
+
+        /*
+         * If status code exists and is not 0, route failed.
+         * In that case donor will not be used for route distance.
+         */
+        if (statusCode.isNotEmpty && statusCode != '0') {
+          continue;
+        }
+
+        final int? distanceMeters = item['distanceMeters'] is int
+            ? item['distanceMeters'] as int
+            : int.tryParse(item['distanceMeters']?.toString() ?? '');
+
+        if (distanceMeters == null) continue;
+
+        final int durationSeconds = _parseGoogleDurationSeconds(
+          item['duration'],
+        );
+
+        final double routeDistanceKm = double.parse(
+          (distanceMeters / 1000).toStringAsFixed(2),
+        );
+
+        final int routeDurationMin = durationSeconds <= 0
+            ? 0
+            : max(1, (durationSeconds / 60).round());
+
+        final int originalIndex = start + destinationIndex;
+
+        updatedDonors[originalIndex]['distance_km'] = routeDistanceKm;
+        updatedDonors[originalIndex]['distanceKm'] = routeDistanceKm;
+        updatedDonors[originalIndex]['distance'] = routeDistanceKm;
+
+        updatedDonors[originalIndex]['route_distance_km'] = routeDistanceKm;
+        updatedDonors[originalIndex]['route_distance_meters'] = distanceMeters;
+        updatedDonors[originalIndex]['route_duration_seconds'] =
+            durationSeconds;
+        updatedDonors[originalIndex]['route_duration_min'] = routeDurationMin;
+        updatedDonors[originalIndex]['distance_type'] = 'road_route';
+        updatedDonors[originalIndex]['travel_mode'] = 'DRIVE';
+      }
+    }
+
+    updatedDonors.removeWhere((donor) {
+      final distance = double.tryParse(
+        donor['route_distance_km']?.toString() ?? '',
+      );
+
+      return distance == null;
+    });
+
+    return updatedDonors;
   }
 
   static Future<Map<String, dynamic>> getBloodRequestById(
@@ -188,7 +382,7 @@ class DonationRequestSdk {
     final donorSnapshot =
         await _firestore.collection(donorRequestsCollection).get();
 
-    final List<Map<String, dynamic>> donors = [];
+    final List<Map<String, dynamic>> preFilteredDonors = [];
 
     for (final doc in donorSnapshot.docs) {
       final donor = Map<String, dynamic>.from(doc.data());
@@ -229,28 +423,64 @@ class DonationRequestSdk {
 
       if (donorLat == null || donorLng == null) continue;
 
-      final double distance = _distanceKm(
+      /*
+       * This rough distance is only used to reduce Google API calls.
+       * It is NOT displayed as final nearby distance.
+       *
+       * We allow a wider pre-filter than selected radius because road route
+       * distance can be longer than straight-line distance.
+       */
+      final double roughDistanceKm = _distanceKm(
         patientLat,
         patientLng,
         donorLat,
         donorLng,
       );
 
-      if (distance > radiusKm) continue;
+      final double preFilterRadiusKm = max(radiusKm * 2, radiusKm + 10);
 
-      donor['distance_km'] = distance;
-      donor['distanceKm'] = distance;
+      if (roughDistanceKm > preFilterRadiusKm) continue;
+
+      donor['_donor_lat'] = donorLat;
+      donor['_donor_lng'] = donorLng;
+
+      donor['rough_distance_km'] = roughDistanceKm;
+      donor['straight_line_distance_km'] = roughDistanceKm;
+
       donor['donor_blood_group'] = donorBloodGroup;
       donor['blood_group'] = donorBloodGroup;
+
+      preFilteredDonors.add(donor);
+    }
+
+    final List<Map<String, dynamic>> routeDonors =
+        await _fetchGoogleRouteMatrix(
+      originLat: patientLat,
+      originLng: patientLng,
+      donors: preFilteredDonors,
+    );
+
+    final List<Map<String, dynamic>> donors = [];
+
+    for (final donor in routeDonors) {
+      final double routeDistanceKm = double.tryParse(
+            donor['route_distance_km']?.toString() ?? '',
+          ) ??
+          999999;
+
+      if (routeDistanceKm > radiusKm) continue;
+
+      donor.remove('_donor_lat');
+      donor.remove('_donor_lng');
 
       donors.add(donor);
     }
 
     donors.sort((a, b) {
       final double aDistance =
-          double.tryParse(a['distance_km']?.toString() ?? '') ?? 999999;
+          double.tryParse(a['route_distance_km']?.toString() ?? '') ?? 999999;
       final double bDistance =
-          double.tryParse(b['distance_km']?.toString() ?? '') ?? 999999;
+          double.tryParse(b['route_distance_km']?.toString() ?? '') ?? 999999;
 
       return aDistance.compareTo(bDistance);
     });

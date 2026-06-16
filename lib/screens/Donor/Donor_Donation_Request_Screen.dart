@@ -1,4 +1,4 @@
-// lib/screens/Donor/DonorDonationRequestScreen.dart
+//
 
 import 'package:flutter/material.dart';
 
@@ -64,9 +64,8 @@ class _DonorDonationRequestScreenState
   }
 
   Future<void> rejectRequest(Map<String, dynamic> item) async {
-    final String requestId = item['id']?.toString() ??
-        item['donation_request_id']?.toString() ??
-        '';
+    final String requestId =
+        item['id']?.toString() ?? item['donation_request_id']?.toString() ?? '';
 
     if (requestId.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -98,27 +97,20 @@ class _DonorDonationRequestScreenState
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(e.message),
-          backgroundColor: Colors.red,
-        ),
+        SnackBar(content: Text(e.message), backgroundColor: Colors.red),
       );
     } catch (e) {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error: $e'),
-          backgroundColor: Colors.red,
-        ),
+        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
       );
     }
   }
 
   Future<void> openConsentForm(Map<String, dynamic> item) async {
-    final String requestId = item['id']?.toString() ??
-        item['donation_request_id']?.toString() ??
-        '';
+    final String requestId =
+        item['id']?.toString() ?? item['donation_request_id']?.toString() ?? '';
 
     if (requestId.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -136,12 +128,16 @@ class _DonorDonationRequestScreenState
         builder: (_) => ConsentFormScreen(
           requestId: requestId,
           patientName: item['patient_name']?.toString() ?? 'Patient',
-          bloodGroup: item['blood_group']?.toString() ??
+          bloodGroup:
+              item['blood_group']?.toString() ??
               item['donor_blood_group']?.toString() ??
               '',
           patientLocation:
               item['patient_location']?.toString() ?? 'Location not available',
-          patientMessage: item['message']?.toString() ?? '',
+          patientMessage:
+              item['case_description']?.toString() ??
+              item['message']?.toString() ??
+              '',
         ),
       ),
     );
@@ -171,6 +167,131 @@ class _DonorDonationRequestScreenState
     if (lower == 'rejected') return 'Rejected';
 
     return status.trim().isEmpty ? 'N/A' : status;
+  }
+
+  String safeText(dynamic value) {
+    if (value == null) return '';
+
+    final text = value.toString().trim();
+
+    if (text.isEmpty || text.toLowerCase() == 'null') {
+      return '';
+    }
+
+    return text;
+  }
+
+  String readableText(dynamic value) {
+    final text = safeText(value);
+
+    if (text.isEmpty) return '';
+
+    final cleaned = text
+        .replaceAll('_', ' ')
+        .replaceAll('/', ' / ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+
+    return cleaned
+        .split(' ')
+        .map((word) {
+          if (word.trim().isEmpty) return '';
+          if (word == '/') return word;
+
+          return word[0].toUpperCase() + word.substring(1).toLowerCase();
+        })
+        .where((word) => word.trim().isNotEmpty)
+        .join(' ');
+  }
+
+  String formatBloodConstituents(dynamic value) {
+    if (value == null) return '';
+
+    if (value is List) {
+      final list = value
+          .map((item) => item.toString().trim())
+          .where((item) => item.isNotEmpty && item.toLowerCase() != 'null')
+          .toList();
+
+      return list.join(', ');
+    }
+
+    return safeText(value);
+  }
+
+  String formatUnitsRequired(dynamic value) {
+    final text = safeText(value);
+
+    if (text.isEmpty) return '';
+
+    final units = int.tryParse(text);
+
+    if (units == null) return text;
+
+    if (units == 4) {
+      return '4+ Units';
+    }
+
+    return '$units Unit${units > 1 ? 's' : ''}';
+  }
+
+  String formatRequiredWithin(dynamic value) {
+    final text = safeText(value);
+
+    if (text.isEmpty) return '';
+
+    final hours = int.tryParse(text);
+
+    if (hours == null) return text;
+
+    return 'Within $hours hour${hours > 1 ? 's' : ''}';
+  }
+
+  String formatPriority(dynamic value) {
+    final text = safeText(value);
+
+    if (text.isEmpty) return '';
+
+    return '$text / 100';
+  }
+
+  String formatEmergency(dynamic value) {
+    if (value == null) return '';
+
+    if (value is bool) {
+      return value ? 'Yes' : 'No';
+    }
+
+    final text = value.toString().trim().toLowerCase();
+
+    if (text == 'true' || text == '1' || text == 'yes') {
+      return 'Yes';
+    }
+
+    if (text == 'false' || text == '0' || text == 'no') {
+      return 'No';
+    }
+
+    return safeText(value);
+  }
+
+  String formatDateTime(dynamic value) {
+    final text = safeText(value);
+
+    if (text.isEmpty) return '';
+
+    try {
+      final date = DateTime.parse(text).toLocal();
+
+      String twoDigits(int number) {
+        return number.toString().padLeft(2, '0');
+      }
+
+      return '${twoDigits(date.day)}-${twoDigits(date.month)}-${date.year} '
+          '${twoDigits(date.hour)}:${twoDigits(date.minute)}';
+    } catch (_) {
+      return text;
+    }
   }
 
   String formatTime(dynamic value) {
@@ -207,7 +328,7 @@ class _DonorDonationRequestScreenState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 108,
+            width: 118,
             child: Text(
               '$label:',
               style: const TextStyle(
@@ -220,10 +341,7 @@ class _DonorDonationRequestScreenState
           Expanded(
             child: Text(
               safeValue,
-              style: const TextStyle(
-                color: Colors.black54,
-                fontSize: 13,
-              ),
+              style: const TextStyle(color: Colors.black54, fontSize: 13),
             ),
           ),
         ],
@@ -231,32 +349,84 @@ class _DonorDonationRequestScreenState
     );
   }
 
+  Widget optionalInfoRow(String label, String value) {
+    if (value.trim().isEmpty || value.trim().toLowerCase() == 'null') {
+      return const SizedBox.shrink();
+    }
+
+    return infoRow(label, value);
+  }
+
+  Widget smallDivider() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 10, bottom: 4),
+      child: Divider(color: Colors.grey.shade200, height: 1),
+    );
+  }
+
   Widget buildRequestCard(Map<String, dynamic> item) {
-    final String patientName = item['patient_name']?.toString() ?? 'Patient';
+    final String patientName = safeText(item['patient_name']).isNotEmpty
+        ? safeText(item['patient_name'])
+        : 'Patient';
 
-    final String bloodGroup = item['blood_group']?.toString() ??
-        item['donor_blood_group']?.toString() ??
-        'N/A';
+    final String bloodGroup = safeText(item['blood_group']).isNotEmpty
+        ? safeText(item['blood_group'])
+        : safeText(item['donor_blood_group']).isNotEmpty
+        ? safeText(item['donor_blood_group'])
+        : 'N/A';
 
-    final String location =
-        item['patient_location']?.toString() ?? 'Location not available';
+    final String location = safeText(item['patient_location']).isNotEmpty
+        ? safeText(item['patient_location'])
+        : safeText(item['location']).isNotEmpty
+        ? safeText(item['location'])
+        : 'Location not available';
 
-    final String phone = item['patient_phone']?.toString() ?? 'N/A';
+    final String city = safeText(item['city']).isNotEmpty
+        ? safeText(item['city'])
+        : safeText(item['current_city']);
 
-    final String message = item['message']?.toString() ?? 'N/A';
+    final String phone = safeText(item['patient_phone']);
 
-    final String status = item['status']?.toString() ?? 'pending';
+    final String hospitalName = safeText(item['hospital_name']);
 
-    final String rejectReason = item['reject_reason']?.toString() ?? '';
+    final String constituents = formatBloodConstituents(
+      item['blood_constituents'],
+    );
+
+    final String units = formatUnitsRequired(item['units_required']);
+
+    final String severity = readableText(item['severity']);
+
+    final String requiredWithin = formatRequiredWithin(
+      item['required_within_hours'],
+    );
+
+    final String requiredBy = formatDateTime(item['required_by_time']);
+
+    final String caseType = readableText(item['case_type']);
+
+    final String message = safeText(item['case_description']).isNotEmpty
+        ? safeText(item['case_description'])
+        : safeText(item['message']);
+
+    final String doctorNote = safeText(item['doctor_note']);
+
+    final String emergency = formatEmergency(item['is_emergency']);
+
+    final String priority = formatPriority(item['priority_score']);
+
+    final String status = safeText(item['status']).isNotEmpty
+        ? safeText(item['status'])
+        : 'pending';
+
+    final String rejectReason = safeText(item['reject_reason']);
 
     final bool isPending = status.toLowerCase() == 'pending';
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       elevation: 1,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
@@ -306,11 +476,32 @@ class _DonorDonationRequestScreenState
                 ),
               ],
             ),
+
             const SizedBox(height: 10),
+
+            infoRow('Hospital', hospitalName),
+            optionalInfoRow('City', city),
             infoRow('Location', location),
-            infoRow('Phone', phone),
-            infoRow('Message', message),
+            optionalInfoRow('Phone', phone),
+
+            smallDivider(),
+
+            infoRow('Blood Group', bloodGroup),
+            optionalInfoRow('Constituents', constituents),
+            optionalInfoRow('Units', units),
+            optionalInfoRow('Severity', severity),
+            optionalInfoRow('Required', requiredWithin),
+            optionalInfoRow('Required By', requiredBy),
+            optionalInfoRow('Case Type', caseType),
+            optionalInfoRow('Emergency', emergency),
+            optionalInfoRow('Priority', priority),
+
+            smallDivider(),
+
+            infoRow('Case Details', message),
+            optionalInfoRow('Doctor Note', doctorNote),
             infoRow('Time', formatTime(item['created_at'])),
+
             if (rejectReason.trim().isNotEmpty) ...[
               const SizedBox(height: 8),
               Text(
@@ -322,7 +513,9 @@ class _DonorDonationRequestScreenState
                 ),
               ),
             ],
+
             const SizedBox(height: 14),
+
             if (isPending)
               Row(
                 children: [
@@ -400,11 +593,7 @@ class _DonorDonationRequestScreenState
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.bloodtype_outlined,
-            size: 80,
-            color: Colors.grey,
-          ),
+          Icon(Icons.bloodtype_outlined, size: 80, color: Colors.grey),
           SizedBox(height: 12),
           Text(
             'No blood requests yet',
@@ -441,38 +630,38 @@ class _DonorDonationRequestScreenState
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
           : errorMessage.isNotEmpty
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(18),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          errorMessage,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(color: Colors.red),
-                        ),
-                        const SizedBox(height: 14),
-                        ElevatedButton(
-                          onPressed: fetchBloodRequests,
-                          child: const Text('Retry'),
-                        ),
-                      ],
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      errorMessage,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.red),
                     ),
-                  ),
-                )
-              : requests.isEmpty
-                  ? buildEmptyState()
-                  : RefreshIndicator(
-                      onRefresh: fetchBloodRequests,
-                      child: ListView.builder(
-                        padding: const EdgeInsets.all(12),
-                        itemCount: requests.length,
-                        itemBuilder: (context, index) {
-                          return buildRequestCard(requests[index]);
-                        },
-                      ),
+                    const SizedBox(height: 14),
+                    ElevatedButton(
+                      onPressed: fetchBloodRequests,
+                      child: const Text('Retry'),
                     ),
+                  ],
+                ),
+              ),
+            )
+          : requests.isEmpty
+          ? buildEmptyState()
+          : RefreshIndicator(
+              onRefresh: fetchBloodRequests,
+              child: ListView.builder(
+                padding: const EdgeInsets.all(12),
+                itemCount: requests.length,
+                itemBuilder: (context, index) {
+                  return buildRequestCard(requests[index]);
+                },
+              ),
+            ),
     );
   }
 }

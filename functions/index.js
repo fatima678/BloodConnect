@@ -6,6 +6,10 @@ admin.initializeApp();
 
 const db = admin.firestore();
 
+const REGION = "asia-south1";
+const CHANNEL_ID = "blood_requests_channel";
+const DEBUG_COLLECTION = "push_debug_logs";
+
 const ROLE_COLLECTIONS = {
   patient: "patients",
   donor: "donors",
@@ -18,7 +22,9 @@ function readString(data, keys) {
   for (const key of keys) {
     const value = data[key];
 
-    if (value === null || value === undefined) continue;
+    if (value === null || value === undefined) {
+      continue;
+    }
 
     const text = String(value).trim();
 
@@ -30,14 +36,22 @@ function readString(data, keys) {
   return "";
 }
 
-function normalizeRole(role) {
+function normalizeRole(role, fallbackRole = "patient") {
   const value = String(role || "").trim().toLowerCase();
 
   if (value === "volunteer") {
     return "team_volunteer";
   }
 
-  return value || "patient";
+  if (value === "team_volunteer") {
+    return "team_volunteer";
+  }
+
+  if (value === "patient" || value === "donor" || value === "admin") {
+    return value;
+  }
+
+  return fallbackRole;
 }
 
 function roleCollection(role) {
@@ -46,36 +60,153 @@ function roleCollection(role) {
   return ROLE_COLLECTIONS[cleanRole] || null;
 }
 
+function resolveRecipientUid(notification, role) {
+  const cleanRole = normalizeRole(role);
+
+  if (cleanRole === "donor") {
+    return readString(notification, [
+      "recipient_uid",
+      "receiver_uid",
+      "user_uid",
+      "donor_uid",
+      "donor_user_id",
+      "donor_id",
+    ]);
+  }
+
+  if (cleanRole === "patient") {
+    return readString(notification, [
+      "recipient_uid",
+      "receiver_uid",
+      "user_uid",
+      "patient_uid",
+      "patient_id",
+      "patient_user_id",
+    ]);
+  }
+
+  if (cleanRole === "team_volunteer") {
+    return readString(notification, [
+      "recipient_uid",
+      "receiver_uid",
+      "user_uid",
+      "volunteer_uid",
+      "team_volunteer_uid",
+    ]);
+  }
+
+  if (cleanRole === "admin") {
+    return readString(notification, [
+      "recipient_uid",
+      "receiver_uid",
+      "user_uid",
+      "admin_uid",
+    ]);
+  }
+
+  return readString(notification, [
+    "recipient_uid",
+    "receiver_uid",
+    "user_uid",
+  ]);
+}
+
+function safeDataValue(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  return String(value);
+}
+
+function buildDataPayload(data) {
+  const payload = {};
+
+  for (const [key, value] of Object.entries(data)) {
+    payload[key] = safeDataValue(value);
+  }
+
+  return payload;
+}
+
+async function writeDebug({
+  notificationId,
+  collectionName,
+  stage,
+  role = "",
+  recipientUid = "",
+  userPath = "",
+  tokenCount = 0,
+  successCount = null,
+  failureCount = null,
+  error = "",
+  extra = {},
+}) {
+  const debugData = {
+    notification_id: notificationId,
+    collection_name: collectionName,
+    stage,
+    role,
+    recipient_uid: recipientUid,
+    user_path: userPath,
+    token_count: tokenCount,
+    success_count: successCount,
+    failure_count: failureCount,
+    error,
+    extra,
+    created_at: admin.firestore.FieldValue.serverTimestamp(),
+  };
+
+  logger.info("PUSH DEBUG", debugData);
+
+  await db.collection(DEBUG_COLLECTION).add(debugData);
+}
+
+async function markNotification(snap, data) {
+  await snap.ref.set(
+    {
+      ...data,
+      push_checked_at: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
 async function getRecipientUserData({ uid, role }) {
   const collectionName = roleCollection(role);
 
-  if (!collectionName) {
-    logger.warn("Invalid role collection.", { uid, role });
+  if (!uid || !collectionName) {
     return null;
   }
 
-  const userRef = db
+  const roleUserRef = db
     .collection("users")
     .doc("roles")
     .collection(collectionName)
     .doc(uid);
 
-  const userSnap = await userRef.get();
+  const roleUserSnap = await roleUserRef.get();
 
-  if (!userSnap.exists) {
-    logger.warn("Recipient user document not found.", {
-      uid,
-      role,
-      path: userRef.path,
-    });
-
-    return null;
+  if (roleUserSnap.exists) {
+    return {
+      ref: roleUserRef,
+      data: roleUserSnap.data() || {},
+      path: roleUserRef.path,
+    };
   }
 
-  return {
-    ref: userRef,
-    data: userSnap.data() || {},
-  };
+  const directUserRef = db.collection("users").doc(uid);
+  const directUserSnap = await directUserRef.get();
+
+  if (directUserSnap.exists) {
+    return {
+      ref: directUserRef,
+      data: directUserSnap.data() || {},
+      path: directUserRef.path,
+    };
+  }
+
+  return null;
 }
 
 function collectFcmTokens(userData) {
@@ -86,6 +217,10 @@ function collectFcmTokens(userData) {
     "fcmToken",
     "device_token",
     "deviceToken",
+    "notification_token",
+    "notificationToken",
+    "messaging_token",
+    "messagingToken",
   ]);
 
   if (directToken) {
@@ -97,11 +232,17 @@ function collectFcmTokens(userData) {
     userData.fcmTokens,
     userData.device_tokens,
     userData.deviceTokens,
+    userData.notification_tokens,
+    userData.notificationTokens,
+    userData.messaging_tokens,
+    userData.messagingTokens,
     userData.tokens,
   ];
 
   for (const item of possibleArrays) {
-    if (!Array.isArray(item)) continue;
+    if (!Array.isArray(item)) {
+      continue;
+    }
 
     for (const token of item) {
       if (typeof token === "string" && token.trim()) {
@@ -114,10 +255,16 @@ function collectFcmTokens(userData) {
     userData.devices,
     userData.fcm_devices,
     userData.fcmDevices,
+    userData.device_map,
+    userData.deviceMap,
   ];
 
   for (const deviceMap of possibleDeviceMaps) {
-    if (!deviceMap || typeof deviceMap !== "object" || Array.isArray(deviceMap)) {
+    if (
+      !deviceMap ||
+      typeof deviceMap !== "object" ||
+      Array.isArray(deviceMap)
+    ) {
       continue;
     }
 
@@ -127,7 +274,9 @@ function collectFcmTokens(userData) {
         continue;
       }
 
-      if (!device || typeof device !== "object") continue;
+      if (!device || typeof device !== "object") {
+        continue;
+      }
 
       const token = readString(device, [
         "fcm_token",
@@ -135,6 +284,8 @@ function collectFcmTokens(userData) {
         "token",
         "device_token",
         "deviceToken",
+        "notification_token",
+        "notificationToken",
       ]);
 
       if (token) {
@@ -146,7 +297,12 @@ function collectFcmTokens(userData) {
   return Array.from(tokens);
 }
 
-function buildNotificationPayload({ snap, notification }) {
+function buildNotificationPayload({
+  snap,
+  notification,
+  fallbackRole,
+  collectionName,
+}) {
   const title =
     readString(notification, [
       "title",
@@ -166,24 +322,16 @@ function buildNotificationPayload({ snap, notification }) {
       "notification_type",
     ]) || "notification";
 
-  const role = normalizeRole(
-    readString(notification, [
-      "role",
-      "recipient_role",
-      "receiver_role",
-      "user_role",
-    ])
-  );
-
-  const recipientUid = readString(notification, [
-    "recipient_uid",
-    "receiver_uid",
-    "user_uid",
-    "patient_uid",
-    "donor_uid",
-    "volunteer_uid",
-    "admin_uid",
+  const roleFromDocument = readString(notification, [
+    "role",
+    "recipient_role",
+    "receiver_role",
+    "user_role",
   ]);
+
+  const role = normalizeRole(roleFromDocument, fallbackRole);
+
+  const recipientUid = resolveRecipientUid(notification, role);
 
   return {
     title,
@@ -191,188 +339,435 @@ function buildNotificationPayload({ snap, notification }) {
     type,
     role,
     recipientUid,
-    data: {
+    data: buildDataPayload({
       notification_id: snap.id,
+      collection: collectionName,
       type,
       role,
       recipient_uid: recipientUid,
-    },
+
+      request_id: readString(notification, [
+        "request_id",
+        "donation_request_id",
+        "blood_request_id",
+      ]),
+
+      donation_request_id: readString(notification, [
+        "donation_request_id",
+        "request_id",
+      ]),
+
+      blood_request_id: readString(notification, [
+        "blood_request_id",
+      ]),
+
+      donor_request_id: readString(notification, [
+        "donor_request_id",
+      ]),
+
+      donor_uid: readString(notification, [
+        "donor_uid",
+        "donor_user_id",
+        "donor_id",
+      ]),
+
+      patient_uid: readString(notification, [
+        "patient_uid",
+        "patient_id",
+        "patient_user_id",
+      ]),
+
+      volunteer_uid: readString(notification, [
+        "volunteer_uid",
+        "team_volunteer_uid",
+      ]),
+
+      status: readString(notification, [
+        "status",
+        "request_status",
+      ]),
+    }),
   };
 }
 
-exports.sendPushOnNotificationCreate = onDocumentCreated(
-  {
-    document: "notifications/{notificationId}",
-    region: "asia-south1",
-  },
-  async (event) => {
-    const snap = event.data;
+async function clearInvalidSingleToken({
+  recipient,
+  invalidTokens,
+}) {
+  if (!recipient || !recipient.ref || invalidTokens.length === 0) {
+    return;
+  }
 
-    if (!snap) {
-      logger.warn("No snapshot found in event.");
-      return;
-    }
+  const currentToken = readString(recipient.data, [
+    "fcm_token",
+    "fcmToken",
+    "device_token",
+    "deviceToken",
+  ]);
 
-    const notification = snap.data() || {};
+  if (!currentToken || !invalidTokens.includes(currentToken)) {
+    return;
+  }
 
-    /*
-      Avoid accidental re-send if later you copy this code to an update trigger.
-    */
-    if (notification.push_sent === true) {
-      logger.info("Push already sent. Skipping.", {
-        notificationId: snap.id,
-      });
-      return;
-    }
+  await recipient.ref.set(
+    {
+      fcm_token: admin.firestore.FieldValue.delete(),
+      fcmToken: admin.firestore.FieldValue.delete(),
+      device_token: admin.firestore.FieldValue.delete(),
+      deviceToken: admin.firestore.FieldValue.delete(),
+      fcm_token_updated_at: admin.firestore.FieldValue.serverTimestamp(),
+      updated_at: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
 
-    const payload = buildNotificationPayload({
-      snap,
-      notification,
+async function handleNotificationCreate(event, fallbackRole, collectionName) {
+  const snap = event.data;
+
+  if (!snap) {
+    logger.warn("No snapshot found in event.", {
+      collectionName,
+      fallbackRole,
     });
 
-    if (!payload.recipientUid) {
-      logger.warn("Notification recipient uid missing.", {
-        notificationId: snap.id,
-        notification,
-      });
+    return;
+  }
 
-      await snap.ref.set(
-        {
-          push_sent: false,
-          push_error: "recipient_uid_missing",
-          push_checked_at: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+  const notification = snap.data() || {};
+  const notificationId = snap.id;
 
-      return;
-    }
+  await writeDebug({
+    notificationId,
+    collectionName,
+    stage: "trigger_started",
+    extra: {
+      fallbackRole,
+    },
+  });
 
-    const recipient = await getRecipientUserData({
-      uid: payload.recipientUid,
+  if (notification.push_sent === true) {
+    await writeDebug({
+      notificationId,
+      collectionName,
+      stage: "already_push_sent_skipped",
+    });
+
+    return;
+  }
+
+  const payload = buildNotificationPayload({
+    snap,
+    notification,
+    fallbackRole,
+    collectionName,
+  });
+
+  await markNotification(snap, {
+    push_debug_stage: "payload_built",
+    push_role: payload.role,
+    push_recipient_uid: payload.recipientUid || null,
+  });
+
+  await writeDebug({
+    notificationId,
+    collectionName,
+    stage: "payload_built",
+    role: payload.role,
+    recipientUid: payload.recipientUid,
+    extra: {
+      title: payload.title,
+      body: payload.body,
+      type: payload.type,
+    },
+  });
+
+  if (!payload.recipientUid) {
+    await markNotification(snap, {
+      push_sent: false,
+      push_error: "recipient_uid_missing",
+      push_debug_stage: "recipient_uid_missing",
+    });
+
+    await writeDebug({
+      notificationId,
+      collectionName,
+      stage: "recipient_uid_missing",
       role: payload.role,
+      error: "recipient_uid_missing",
     });
 
-    if (!recipient) {
-      await snap.ref.set(
-        {
-          push_sent: false,
-          push_error: "recipient_user_not_found",
-          push_checked_at: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+    return;
+  }
 
-      return;
-    }
+  const recipient = await getRecipientUserData({
+    uid: payload.recipientUid,
+    role: payload.role,
+  });
 
-    const tokens = collectFcmTokens(recipient.data);
+  if (!recipient) {
+    await markNotification(snap, {
+      push_sent: false,
+      push_error: "recipient_user_not_found",
+      push_debug_stage: "recipient_user_not_found",
+      push_role: payload.role,
+      push_recipient_uid: payload.recipientUid,
+    });
 
-    if (tokens.length === 0) {
-      logger.warn("No FCM token found for recipient.", {
-        notificationId: snap.id,
-        uid: payload.recipientUid,
-        role: payload.role,
-      });
+    await writeDebug({
+      notificationId,
+      collectionName,
+      stage: "recipient_user_not_found",
+      role: payload.role,
+      recipientUid: payload.recipientUid,
+      error: "recipient_user_not_found",
+    });
 
-      await snap.ref.set(
-        {
-          push_sent: false,
-          push_error: "fcm_token_not_found",
-          push_checked_at: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+    return;
+  }
 
-      return;
-    }
+  await writeDebug({
+    notificationId,
+    collectionName,
+    stage: "recipient_user_found",
+    role: payload.role,
+    recipientUid: payload.recipientUid,
+    userPath: recipient.path,
+  });
 
-    const message = {
-      tokens,
-      notification: {
-        title: payload.title,
-        body: payload.body,
+  const tokens = collectFcmTokens(recipient.data);
+
+  await markNotification(snap, {
+    push_debug_stage: "tokens_checked",
+    push_user_path: recipient.path,
+    push_token_count: tokens.length,
+  });
+
+  if (tokens.length === 0) {
+    await markNotification(snap, {
+      push_sent: false,
+      push_error: "fcm_token_not_found",
+      push_debug_stage: "fcm_token_not_found",
+      push_role: payload.role,
+      push_recipient_uid: payload.recipientUid,
+      push_user_path: recipient.path,
+      push_token_count: 0,
+    });
+
+    await writeDebug({
+      notificationId,
+      collectionName,
+      stage: "fcm_token_not_found",
+      role: payload.role,
+      recipientUid: payload.recipientUid,
+      userPath: recipient.path,
+      tokenCount: 0,
+      error: "fcm_token_not_found",
+      extra: {
+        availableUserFields: Object.keys(recipient.data || {}),
       },
-      data: payload.data,
-      android: {
+    });
+
+    return;
+  }
+
+  const message = {
+    tokens,
+    notification: {
+      title: payload.title,
+      body: payload.body,
+    },
+    data: payload.data,
+    android: {
+      priority: "high",
+      notification: {
+        channelId: CHANNEL_ID,
+        sound: "default",
         priority: "high",
-        notification: {
-          channelId: "blood_requests_channel",
+        defaultSound: true,
+      },
+    },
+    apns: {
+      payload: {
+        aps: {
           sound: "default",
         },
       },
-      apns: {
-        payload: {
-          aps: {
-            sound: "default",
-          },
-        },
-      },
-    };
+    },
+  };
 
-    const response = await admin.messaging().sendEachForMulticast(message);
+  await writeDebug({
+    notificationId,
+    collectionName,
+    stage: "sending_to_fcm",
+    role: payload.role,
+    recipientUid: payload.recipientUid,
+    userPath: recipient.path,
+    tokenCount: tokens.length,
+  });
 
-    logger.info("FCM push send result.", {
-      notificationId: snap.id,
-      uid: payload.recipientUid,
+  await markNotification(snap, {
+    push_debug_stage: "sending_to_fcm",
+    push_token_count: tokens.length,
+  });
+
+  let response;
+
+  try {
+    response = await admin.messaging().sendEachForMulticast(message);
+  } catch (error) {
+    await markNotification(snap, {
+      push_sent: false,
+      push_error: "fcm_send_exception",
+      push_error_message: error.message,
+      push_debug_stage: "fcm_send_exception",
+      push_role: payload.role,
+      push_recipient_uid: payload.recipientUid,
+      push_user_path: recipient.path,
+    });
+
+    await writeDebug({
+      notificationId,
+      collectionName,
+      stage: "fcm_send_exception",
       role: payload.role,
-      successCount: response.successCount,
-      failureCount: response.failureCount,
+      recipientUid: payload.recipientUid,
+      userPath: recipient.path,
+      tokenCount: tokens.length,
+      error: error.message,
     });
 
-    const failedTokens = [];
-    const invalidTokens = [];
+    return;
+  }
 
-    response.responses.forEach((result, index) => {
-      if (result.success) return;
+  const failedTokens = [];
+  const invalidTokens = [];
 
-      const token = tokens[index];
-      const code = result.error && result.error.code;
-      const message = result.error && result.error.message;
-
-      failedTokens.push({
-        token,
-        code,
-        message,
-      });
-
-      if (
-        code === "messaging/registration-token-not-registered" ||
-        code === "messaging/invalid-registration-token"
-      ) {
-        invalidTokens.push(token);
-      }
-    });
-
-    await snap.ref.set(
-      {
-        push_sent: response.successCount > 0,
-        push_success_count: response.successCount,
-        push_failure_count: response.failureCount,
-        push_failed_tokens_count: failedTokens.length,
-        push_error: response.successCount > 0 ? null : "fcm_send_failed",
-        push_checked_at: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
-
-    /*
-      Your app currently stores one token in fcm_token.
-      If that token is invalid, clear it so next login/token refresh can save new one.
-    */
-    if (invalidTokens.length > 0) {
-      const currentToken = readString(recipient.data, ["fcm_token"]);
-
-      if (currentToken && invalidTokens.includes(currentToken)) {
-        await recipient.ref.set(
-          {
-            fcm_token: admin.firestore.FieldValue.delete(),
-            fcm_token_updated_at: admin.firestore.FieldValue.serverTimestamp(),
-            updated_at: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
-      }
+  response.responses.forEach((result, index) => {
+    if (result.success) {
+      return;
     }
+
+    const token = tokens[index];
+    const code = result.error && result.error.code;
+    const errorMessage = result.error && result.error.message;
+
+    failedTokens.push({
+      token,
+      code,
+      message: errorMessage,
+    });
+
+    if (
+      code === "messaging/registration-token-not-registered" ||
+      code === "messaging/invalid-registration-token"
+    ) {
+      invalidTokens.push(token);
+    }
+  });
+
+  await markNotification(snap, {
+    push_sent: response.successCount > 0,
+    push_success_count: response.successCount,
+    push_failure_count: response.failureCount,
+    push_failed_tokens_count: failedTokens.length,
+    push_error: response.successCount > 0 ? null : "fcm_send_failed",
+    push_debug_stage: "fcm_response_received",
+    push_role: payload.role,
+    push_recipient_uid: payload.recipientUid,
+    push_user_path: recipient.path,
+    push_token_count: tokens.length,
+    push_failed_tokens: failedTokens,
+  });
+
+  await writeDebug({
+    notificationId,
+    collectionName,
+    stage: "fcm_response_received",
+    role: payload.role,
+    recipientUid: payload.recipientUid,
+    userPath: recipient.path,
+    tokenCount: tokens.length,
+    successCount: response.successCount,
+    failureCount: response.failureCount,
+    error: response.successCount > 0 ? "" : "fcm_send_failed",
+    extra: {
+      failedTokens,
+    },
+  });
+
+  await clearInvalidSingleToken({
+    recipient,
+    invalidTokens,
+  });
+}
+
+/*
+ * Patient notifications
+ * Donor accept/reject ke baad patient ko push.
+ */
+exports.sendPushOnPatientNotificationCreate = onDocumentCreated(
+  {
+    document: "notifications/{notificationId}",
+    region: REGION,
+  },
+  async (event) => {
+    await handleNotificationCreate(
+      event,
+      "patient",
+      "notifications"
+    );
+  }
+);
+
+/*
+ * Donor notifications
+ * Patient donor ko request send kare to donor ko push.
+ */
+exports.sendPushOnDonorNotificationCreate = onDocumentCreated(
+  {
+    document: "donor_notifications/{notificationId}",
+    region: REGION,
+  },
+  async (event) => {
+    await handleNotificationCreate(
+      event,
+      "donor",
+      "donor_notifications"
+    );
+  }
+);
+
+/*
+ * Volunteer notifications
+ */
+exports.sendPushOnVolunteerNotificationCreate = onDocumentCreated(
+  {
+    document: "volunteer_notifications/{notificationId}",
+    region: REGION,
+  },
+  async (event) => {
+    await handleNotificationCreate(
+      event,
+      "team_volunteer",
+      "volunteer_notifications"
+    );
+  }
+);
+
+/*
+ * Admin notifications
+ */
+exports.sendPushOnAdminNotificationCreate = onDocumentCreated(
+  {
+    document: "admin_notifications/{notificationId}",
+    region: REGION,
+  },
+  async (event) => {
+    await handleNotificationCreate(
+      event,
+      "admin",
+      "admin_notifications"
+    );
   }
 );

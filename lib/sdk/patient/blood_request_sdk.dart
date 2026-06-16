@@ -25,6 +25,54 @@ class BloodRequestSdk {
     'O-',
   ];
 
+  static const List<String> validSeverities = [
+    'normal',
+    'urgent',
+    'critical',
+    'emergency',
+  ];
+
+  static const List<int> validRequiredWithinHours = [1, 2, 4, 6, 12, 24];
+
+  static int _priorityScore(String severity, int requiredWithinHours) {
+    int severityScore;
+
+    switch (severity) {
+      case 'emergency':
+        severityScore = 100;
+        break;
+      case 'critical':
+        severityScore = 80;
+        break;
+      case 'urgent':
+        severityScore = 60;
+        break;
+      default:
+        severityScore = 30;
+        break;
+    }
+
+    int timeScore;
+
+    if (requiredWithinHours <= 1) {
+      timeScore = 30;
+    } else if (requiredWithinHours <= 2) {
+      timeScore = 25;
+    } else if (requiredWithinHours <= 4) {
+      timeScore = 20;
+    } else if (requiredWithinHours <= 6) {
+      timeScore = 15;
+    } else if (requiredWithinHours <= 12) {
+      timeScore = 10;
+    } else {
+      timeScore = 5;
+    }
+
+    final score = severityScore + timeScore;
+
+    return score > 100 ? 100 : score;
+  }
+
   static Future<String> createBloodRequest({
     required String patientName,
     required String location,
@@ -34,6 +82,11 @@ class BloodRequestSdk {
     required String caseDescription,
     required double latitude,
     required double longitude,
+    required int unitsRequired,
+    required String severity,
+    required int requiredWithinHours,
+    required String caseType,
+    required String doctorNote,
     String? city,
   }) async {
     final firebaseUser = _auth.currentUser;
@@ -45,7 +98,9 @@ class BloodRequestSdk {
     final patientUser = await AuthSdk.currentAppUser(expectedRole: 'patient');
 
     if (patientUser == null) {
-      throw const SdkException('Patient profile not found. Please login again.');
+      throw const SdkException(
+        'Patient profile not found. Please login again.',
+      );
     }
 
     if (patientUser.status.trim().toLowerCase() != 'active') {
@@ -58,6 +113,10 @@ class BloodRequestSdk {
     final cleanBloodGroup = bloodGroup.trim().toUpperCase();
     final cleanCaseDescription = caseDescription.trim();
     final cleanCity = city?.trim();
+
+    final cleanSeverity = severity.trim().toLowerCase();
+    final cleanCaseType = caseType.trim().toLowerCase();
+    final cleanDoctorNote = doctorNote.trim();
 
     if (cleanPatientName.isEmpty) {
       throw const SdkException('Patient name is required.');
@@ -79,6 +138,22 @@ class BloodRequestSdk {
       throw const SdkException('Please select blood constituents.');
     }
 
+    if (unitsRequired < 1) {
+      throw const SdkException('Please select valid units required.');
+    }
+
+    if (!validSeverities.contains(cleanSeverity)) {
+      throw const SdkException('Please select valid severity level.');
+    }
+
+    if (!validRequiredWithinHours.contains(requiredWithinHours)) {
+      throw const SdkException('Please select valid required within time.');
+    }
+
+    if (cleanCaseType.isEmpty) {
+      throw const SdkException('Please select case type.');
+    }
+
     if (cleanCaseDescription.isEmpty) {
       throw const SdkException('Case description is required.');
     }
@@ -93,7 +168,19 @@ class BloodRequestSdk {
 
     final docRef = _firestore.collection(collectionName).doc();
     final requestId = docRef.id;
-    final now = DateTime.now().toIso8601String();
+
+    final nowDateTime = DateTime.now();
+    final now = nowDateTime.toIso8601String();
+    final requiredByTime = nowDateTime
+        .add(Duration(hours: requiredWithinHours))
+        .toIso8601String();
+
+    final isEmergency =
+        cleanSeverity == 'urgent' ||
+        cleanSeverity == 'critical' ||
+        cleanSeverity == 'emergency';
+
+    final priorityScore = _priorityScore(cleanSeverity, requiredWithinHours);
 
     final data = <String, dynamic>{
       'id': requestId,
@@ -112,17 +199,27 @@ class BloodRequestSdk {
       'current_city': cleanCity,
 
       'hospital_name': cleanHospitalName,
+
       'blood_group': cleanBloodGroup,
       'blood_constituents': bloodConstituents,
+      'units_required': unitsRequired,
+
+      'severity': cleanSeverity,
+      'required_within_hours': requiredWithinHours,
+      'required_by_time': requiredByTime,
+      'case_type': cleanCaseType,
+
       'case_description': cleanCaseDescription,
       'message': cleanCaseDescription,
 
+      'doctor_note': cleanDoctorNote,
+
+      'is_emergency': isEmergency,
+      'priority_score': priorityScore,
+
       'latitude': latitude,
       'longitude': longitude,
-      'coordinates': {
-        'latitude': latitude,
-        'longitude': longitude,
-      },
+      'coordinates': {'latitude': latitude, 'longitude': longitude},
 
       'status': 'pending',
       'request_status': 'pending',

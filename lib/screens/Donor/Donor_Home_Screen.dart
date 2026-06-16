@@ -1,13 +1,14 @@
 // lib/screens/home_screen.dart
-import 'dart:convert';
+
 import 'package:blood_donation_app/screens/Donor/Donor_Donation_Request_Screen.dart';
 import 'package:carousel_slider/carousel_slider.dart';
 import 'package:flutter/material.dart';
 import 'package:blood_donation_app/theme.dart';
 import 'package:blood_donation_app/services/auth_token_service.dart';
+import 'package:blood_donation_app/sdk/donor/donor_banner_sdk.dart';
 
 // import 'Ambulance.dart';
-import 'Donor_Find_Nearby_Donors.dart';
+// import 'Donor_Find_Nearby_Donors.dart';
 import 'Donor_Blood_Bank_Screen.dart';
 // import 'Donor_Blood_Request_Screen.dart';
 import 'Donor_Profile_Screen.dart';
@@ -17,8 +18,6 @@ import 'Donor_Find_Volunteer_Screen.dart';
 import 'donor_notification_screen.dart';
 import 'Donor_Search_Screen.dart';
 // import 'Certificate_Screen.dart';
-
-
 
 class DonorHomeScreen extends StatefulWidget {
   static const String routeName = '/home';
@@ -143,7 +142,7 @@ class _DonorHomeScreenState extends State<DonorHomeScreen> {
                       ),
                     );
                   },
-                ),             
+                ),
                 _buildDrawerItem(
                   Icons.notifications_outlined,
                   "Notifications",
@@ -168,7 +167,6 @@ class _DonorHomeScreenState extends State<DonorHomeScreen> {
                 ),
                 _buildDrawerItem(Icons.info_outline, "About App"),
                 _buildDrawerItem(Icons.feedback_outlined, "Help/Feedback"),
-
                 const Divider(),
                 ListTile(
                   leading: const Icon(Icons.logout, color: primaryMaroon),
@@ -183,7 +181,10 @@ class _DonorHomeScreenState extends State<DonorHomeScreen> {
                     Navigator.pop(context);
                     await AuthTokenService.clearSession();
                     if (!mounted) return;
-                    Navigator.of(context).pushNamedAndRemoveUntil('/role-selection', (route) => false);
+                    Navigator.of(context).pushNamedAndRemoveUntil(
+                      '/role-selection',
+                      (route) => false,
+                    );
                   },
                 ),
               ],
@@ -236,37 +237,23 @@ class _DashboardContentState extends State<DashboardContent> {
 
   Future<void> _fetchBanners() async {
     try {
-      final response = await AuthTokenService.authorizedGet('/fetch-banners');
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['success'] == true && data['data'] != null) {
-          final List dynamicList = data['data'];
-          final List<String> loadedUrls = [];
-          for (var item in dynamicList) {
-            if (item is Map) {
-              if (item['image_url'] != null) {
-                loadedUrls.add(item['image_url'].toString());
-              } else if (item['url'] != null) {
-                loadedUrls.add(item['url'].toString());
-              } else if (item['image'] != null) {
-                loadedUrls.add(item['image'].toString());
-              }
-            }
-          }
-          if (loadedUrls.isNotEmpty) {
-            setState(() {
-              _carouselImages = loadedUrls;
-              _isLoadingBanners = false;
-            });
-            return;
-          }
-        }
+      final List<String> loadedUrls = await DonorBannerSdk.fetchBannerImages();
+
+      if (!mounted) return;
+
+      if (loadedUrls.isNotEmpty) {
+        setState(() {
+          _carouselImages = loadedUrls;
+          _isLoadingBanners = false;
+        });
+        return;
       }
     } catch (e) {
-      debugPrint("Error fetching database dynamic slider banners: $e");
+      debugPrint("Error fetching donor banners from Firestore SDK: $e");
     }
 
-    // Fallback block if backend dashboard nodes are entirely unreachable
+    if (!mounted) return;
+
     setState(() {
       _carouselImages = [
         'lib/assets/blood_donation.png',
@@ -321,7 +308,9 @@ class _DashboardContentState extends State<DashboardContent> {
                         width: double.infinity,
                         color: Colors.grey[200],
                         child: const Center(
-                          child: CircularProgressIndicator(color: primaryMaroon),
+                          child: CircularProgressIndicator(
+                            color: primaryMaroon,
+                          ),
                         ),
                       )
                     : CarouselSlider.builder(
@@ -337,35 +326,51 @@ class _DashboardContentState extends State<DashboardContent> {
                         ),
                         itemBuilder: (context, index, realIndex) {
                           final imagePathOrUrl = _carouselImages[index];
-                          final isNetworkImage = imagePathOrUrl.startsWith('http://') || imagePathOrUrl.startsWith('https://');
+                          final isNetworkImage =
+                              imagePathOrUrl.startsWith('http://') ||
+                              imagePathOrUrl.startsWith('https://');
 
                           return isNetworkImage
                               ? Image.network(
                                   imagePathOrUrl,
                                   fit: BoxFit.cover,
                                   width: double.infinity,
-                                  errorBuilder: (context, error, stackTrace) => Container(
-                                    color: Colors.grey[300],
-                                    child: const Icon(Icons.broken_image, size: 60, color: Colors.grey),
-                                  ),
-                                  loadingBuilder: (context, child, loadingProgress) {
-                                    if (loadingProgress == null) return child;
-                                    return Container(
-                                      color: Colors.grey[200],
-                                      child: const Center(
-                                        child: CircularProgressIndicator(color: primaryMaroon),
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      Container(
+                                        color: Colors.grey[300],
+                                        child: const Icon(
+                                          Icons.broken_image,
+                                          size: 60,
+                                          color: Colors.grey,
+                                        ),
                                       ),
-                                    );
-                                  },
+                                  loadingBuilder:
+                                      (context, child, loadingProgress) {
+                                        if (loadingProgress == null)
+                                          return child;
+                                        return Container(
+                                          color: Colors.grey[200],
+                                          child: const Center(
+                                            child: CircularProgressIndicator(
+                                              color: primaryMaroon,
+                                            ),
+                                          ),
+                                        );
+                                      },
                                 )
                               : Image.asset(
                                   imagePathOrUrl,
                                   fit: BoxFit.cover,
                                   width: double.infinity,
-                                  errorBuilder: (context, error, stackTrace) => Container(
-                                    color: Colors.grey[300],
-                                    child: const Icon(Icons.broken_image, size: 60, color: Colors.grey),
-                                  ),
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      Container(
+                                        color: Colors.grey[300],
+                                        child: const Icon(
+                                          Icons.broken_image,
+                                          size: 60,
+                                          color: Colors.grey,
+                                        ),
+                                      ),
                                 );
                         },
                       ),
@@ -392,9 +397,7 @@ class _DashboardContentState extends State<DashboardContent> {
                   ),
               ],
             ),
-
             const SizedBox(height: 24),
-
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: GridView.count(
@@ -431,8 +434,7 @@ class _DashboardContentState extends State<DashboardContent> {
                     onTap: () => Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (_) => const DonorDonationRequestScreen(
-                        ),
+                        builder: (_) => const DonorDonationRequestScreen(),
                       ),
                     ),
                   ),

@@ -1,9 +1,8 @@
-// lib/screens/home_screen.dart
-import 'dart:convert';
 import 'package:carousel_slider/carousel_slider.dart';
 import 'package:flutter/material.dart';
 import 'package:blood_donation_app/theme.dart';
 import 'package:blood_donation_app/services/auth_token_service.dart';
+import 'package:blood_donation_app/sdk/patient/patient_banner_sdk.dart';
 
 import 'patient_find_nearby_donors.dart';
 import 'patient_blood_bank_screen.dart';
@@ -15,7 +14,6 @@ import 'Patient_Public_Request_Nearby.dart';
 import 'patient_find_volunteer_screen.dart';
 import 'Patient_Notification_Screen.dart';
 import 'Patient_Search_Screen.dart';
-
 
 class PatientHomeScreen extends StatefulWidget {
   static const String routeName = '/home';
@@ -144,7 +142,6 @@ class _PatientHomeScreenState extends State<PatientHomeScreen> {
                 _buildDrawerItem(Icons.star_border, "Rate Us"),
                 _buildDrawerItem(Icons.info_outline, "About App"),
                 _buildDrawerItem(Icons.feedback_outlined, "Help/Feedback"),
-
                 const Divider(),
                 ListTile(
                   leading: const Icon(Icons.logout, color: primaryMaroon),
@@ -159,7 +156,10 @@ class _PatientHomeScreenState extends State<PatientHomeScreen> {
                     Navigator.pop(context);
                     await AuthTokenService.clearSession();
                     if (!mounted) return;
-                    Navigator.of(context).pushNamedAndRemoveUntil('/role-selection', (route) => false);
+                    Navigator.of(context).pushNamedAndRemoveUntil(
+                      '/role-selection',
+                      (route) => false,
+                    );
                   },
                 ),
               ],
@@ -212,38 +212,30 @@ class _DashboardContentState extends State<DashboardContent> {
 
   Future<void> _fetchBanners() async {
     try {
-      // Targets the dynamic admin view endpoint configuration path specified
-      final response = await AuthTokenService.authorizedGet('/fetch-banners');
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['success'] == true && data['data'] != null) {
-          final List dynamicList = data['data'];
-          final List<String> loadedUrls = [];
-          for (var item in dynamicList) {
-            if (item is Map) {
-              if (item['image_url'] != null) {
-                loadedUrls.add(item['image_url'].toString());
-              } else if (item['url'] != null) {
-                loadedUrls.add(item['url'].toString());
-              } else if (item['image'] != null) {
-                loadedUrls.add(item['image'].toString());
-              }
-            }
-          }
-          if (loadedUrls.isNotEmpty) {
-            setState(() {
-              _carouselImages = loadedUrls;
-              _isLoadingBanners = false;
-            });
-            return;
-          }
-        }
+      debugPrint('Patient home banner fetch started');
+
+      final List<String> loadedUrls =
+          await PatientBannerSdk.fetchBannerImages();
+
+      debugPrint('Loaded banner urls: $loadedUrls');
+
+      if (!mounted) return;
+
+      if (loadedUrls.isNotEmpty) {
+        setState(() {
+          _carouselImages = loadedUrls;
+          _isLoadingBanners = false;
+        });
+        return;
       }
+
+      debugPrint('No banners found, showing fallback asset image');
     } catch (e) {
-      debugPrint("Error fetching dynamic runtime admin banners: $e");
+      debugPrint("Error fetching banners from Firestore SDK: $e");
     }
 
-    // Dynamic bundle asset fallback if connectivity fails
+    if (!mounted) return;
+
     setState(() {
       _carouselImages = [
         'lib/assets/blood_donation.png',
@@ -280,7 +272,9 @@ class _DashboardContentState extends State<DashboardContent> {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const BloodRequestsNearbyScreen()),
+                MaterialPageRoute(
+                  builder: (_) => const BloodRequestsNearbyScreen(),
+                ),
               );
             },
           ),
@@ -298,7 +292,9 @@ class _DashboardContentState extends State<DashboardContent> {
                         width: double.infinity,
                         color: Colors.grey[200],
                         child: const Center(
-                          child: CircularProgressIndicator(color: primaryMaroon),
+                          child: CircularProgressIndicator(
+                            color: primaryMaroon,
+                          ),
                         ),
                       )
                     : CarouselSlider.builder(
@@ -314,35 +310,54 @@ class _DashboardContentState extends State<DashboardContent> {
                         ),
                         itemBuilder: (context, index, realIndex) {
                           final imagePathOrUrl = _carouselImages[index];
-                          final isNetworkImage = imagePathOrUrl.startsWith('http://') || imagePathOrUrl.startsWith('https://');
+
+                          final bool isNetworkImage =
+                              imagePathOrUrl.startsWith('http://') ||
+                              imagePathOrUrl.startsWith('https://');
 
                           return isNetworkImage
                               ? Image.network(
                                   imagePathOrUrl,
                                   fit: BoxFit.cover,
                                   width: double.infinity,
-                                  errorBuilder: (context, error, stackTrace) => Container(
-                                    color: Colors.grey[300],
-                                    child: const Icon(Icons.broken_image, size: 60, color: Colors.grey),
-                                  ),
-                                  loadingBuilder: (context, child, loadingProgress) {
-                                    if (loadingProgress == null) return child;
-                                    return Container(
-                                      color: Colors.grey[200],
-                                      child: const Center(
-                                        child: CircularProgressIndicator(color: primaryMaroon),
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      Container(
+                                        color: Colors.grey[300],
+                                        child: const Icon(
+                                          Icons.broken_image,
+                                          size: 60,
+                                          color: Colors.grey,
+                                        ),
                                       ),
-                                    );
-                                  },
+                                  loadingBuilder:
+                                      (context, child, loadingProgress) {
+                                        if (loadingProgress == null) {
+                                          return child;
+                                        }
+
+                                        return Container(
+                                          color: Colors.grey[200],
+                                          child: const Center(
+                                            child: CircularProgressIndicator(
+                                              color: primaryMaroon,
+                                            ),
+                                          ),
+                                        );
+                                      },
                                 )
                               : Image.asset(
                                   imagePathOrUrl,
                                   fit: BoxFit.cover,
                                   width: double.infinity,
-                                  errorBuilder: (context, error, stackTrace) => Container(
-                                    color: Colors.grey[300],
-                                    child: const Icon(Icons.broken_image, size: 60, color: Colors.grey),
-                                  ),
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      Container(
+                                        color: Colors.grey[300],
+                                        child: const Icon(
+                                          Icons.broken_image,
+                                          size: 60,
+                                          color: Colors.grey,
+                                        ),
+                                      ),
                                 );
                         },
                       ),
@@ -369,9 +384,7 @@ class _DashboardContentState extends State<DashboardContent> {
                   ),
               ],
             ),
-
             const SizedBox(height: 24),
-
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: GridView.count(

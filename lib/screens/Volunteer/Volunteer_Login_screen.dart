@@ -1,559 +1,516 @@
-// lib/screens/Volunteer/Volunteer_Login_Screen.dart
-
-import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
-
-import '../../theme.dart';
-import '../../routes.dart';
-import '../../sdk/auth/auth_sdk.dart';
-import '../../sdk/core/sdk_exception.dart';
-
-class VolunteerLoginScreen extends StatefulWidget {
-  const VolunteerLoginScreen({super.key});
-
-  @override
-  State<VolunteerLoginScreen> createState() => _VolunteerLoginScreenState();
-}
+// // lib/screens/Volunteer/Volunteer_Login_Screen.dart
+
+// import 'package:flutter/material.dart';
+// import 'package:firebase_auth/firebase_auth.dart';
+// import 'package:firebase_messaging/firebase_messaging.dart';
+
+// import '../../theme.dart';
+// import '../../routes.dart';
+// import '../../sdk/auth/auth_sdk.dart';
+// import '../../sdk/core/sdk_exception.dart';
+
+// class VolunteerLoginScreen extends StatefulWidget {
+//   const VolunteerLoginScreen({super.key});
+
+//   @override
+//   State<VolunteerLoginScreen> createState() => _VolunteerLoginScreenState();
+// }
 
-class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
-  final TextEditingController emailController = TextEditingController();
-  final TextEditingController passwordController = TextEditingController();
+// class _VolunteerLoginScreenState extends State<VolunteerLoginScreen> {
+//   final TextEditingController emailController = TextEditingController();
+//   final TextEditingController passwordController = TextEditingController();
 
-  bool isLoading = false;
-  bool _obscurePassword = true;
+//   bool isLoading = false;
+//   bool _obscurePassword = true;
 
-  void showMessage({
-    required String message,
-    Color backgroundColor = Colors.red,
-  }) {
-    if (!mounted) return;
+//   void showMessage({
+//     required String message,
+//     Color backgroundColor = Colors.red,
+//   }) {
+//     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: backgroundColor,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
+//     ScaffoldMessenger.of(context).clearSnackBars();
+//     ScaffoldMessenger.of(context).showSnackBar(
+//       SnackBar(
+//         content: Text(message),
+//         backgroundColor: backgroundColor,
+//         behavior: SnackBarBehavior.floating,
+//       ),
+//     );
+//   }
 
-  Future<String?> _getFcmToken() async {
-    try {
-      final settings = await FirebaseMessaging.instance.requestPermission(
-        alert: true,
-        badge: true,
-        sound: true,
-      );
+//   Future<String?> _getFcmToken() async {
+//     try {
+//       final settings = await FirebaseMessaging.instance.requestPermission(
+//         alert: true,
+//         badge: true,
+//         sound: true,
+//       );
 
-      debugPrint("VOLUNTEER FCM Permission: ${settings.authorizationStatus}");
+//       debugPrint("VOLUNTEER FCM Permission: ${settings.authorizationStatus}");
 
-      await FirebaseMessaging.instance.setAutoInitEnabled(true);
+//       await FirebaseMessaging.instance.setAutoInitEnabled(true);
 
-      String? fcmToken = await FirebaseMessaging.instance.getToken();
+//       String? fcmToken = await FirebaseMessaging.instance.getToken();
 
-      if (fcmToken == null || fcmToken.trim().isEmpty) {
-        await Future.delayed(const Duration(seconds: 2));
-        fcmToken = await FirebaseMessaging.instance.getToken();
-      }
+//       if (fcmToken == null || fcmToken.trim().isEmpty) {
+//         await Future.delayed(const Duration(seconds: 2));
+//         fcmToken = await FirebaseMessaging.instance.getToken();
+//       }
 
-      debugPrint("VOLUNTEER FCM Token: $fcmToken");
+//       debugPrint("VOLUNTEER FCM Token: $fcmToken");
 
-      if (fcmToken == null || fcmToken.trim().isEmpty) {
-        return null;
-      }
+//       if (fcmToken == null || fcmToken.trim().isEmpty) {
+//         return null;
+//       }
 
-      return fcmToken.trim();
-    } catch (e) {
-      debugPrint("VOLUNTEER FCM Token Error: $e");
-      return null;
-    }
-  }
+//       return fcmToken.trim();
+//     } catch (e) {
+//       debugPrint("VOLUNTEER FCM Token Error: $e");
+//       return null;
+//     }
+//   }
 
-  Future<void> loginVolunteer() async {
-    FocusScope.of(context).unfocus();
+//   Future<void> loginVolunteer() async {
+//     FocusScope.of(context).unfocus();
 
-    final String email = emailController.text.trim().toLowerCase();
-    final String password = passwordController.text.trim();
+//     final String email = emailController.text.trim().toLowerCase();
+//     final String password = passwordController.text.trim();
 
-    if (email.isEmpty || password.isEmpty) {
-      showMessage(message: "Please fill all fields");
-      return;
-    }
+//     if (email.isEmpty || password.isEmpty) {
+//       showMessage(message: "Please fill all fields");
+//       return;
+//     }
 
-    setState(() => isLoading = true);
+//     setState(() => isLoading = true);
 
-    try {
-      final user = await AuthSdk.login(
-        email: email,
-        password: password,
-        expectedRole: 'team_volunteer',
-      );
+//     try {
+//       final user = await AuthSdk.login(
+//         email: email,
+//         password: password,
+//         expectedRole: 'team_volunteer',
+//       );
 
-      final firebaseUser = FirebaseAuth.instance.currentUser;
+//       final firebaseUser = FirebaseAuth.instance.currentUser;
 
-      if (firebaseUser == null) {
-        throw const SdkException('Login session not found.');
-      }
+//       if (firebaseUser == null) {
+//         throw const SdkException('Login session not found.');
+//       }
 
-      await firebaseUser.reload();
+//       await firebaseUser.reload();
 
-      final refreshedUser = FirebaseAuth.instance.currentUser;
+//       final refreshedUser = FirebaseAuth.instance.currentUser;
 
-      if (refreshedUser == null) {
-        throw const SdkException('Login session not found.');
-      }
+//       if (refreshedUser == null) {
+//         throw const SdkException('Login session not found.');
+//       }
 
-      if (!refreshedUser.emailVerified) {
-        try {
-          await refreshedUser.sendEmailVerification();
-        } catch (_) {}
+//       if (!refreshedUser.emailVerified) {
+//         try {
+//           await refreshedUser.sendEmailVerification();
+//         } catch (_) {}
 
-        if (!mounted) return;
+//         if (!mounted) return;
 
-        setState(() => isLoading = false);
+//         setState(() => isLoading = false);
 
-        showMessage(
-          message: 'Please verify your email first. Verification email sent.',
-          backgroundColor: Colors.orange,
-        );
+//         showMessage(
+//           message: 'Please verify your email first. Verification email sent.',
+//           backgroundColor: Colors.orange,
+//         );
 
-        await Future.delayed(const Duration(milliseconds: 700));
-
-        if (!mounted) return;
-
-        Navigator.pushReplacementNamed(
-          context,
-          AppRoutes.volunteerVerifyEmail,
-        );
-        return;
-      }
-
-      final String? fcmToken = await _getFcmToken();
-
-      bool fcmTokenSaved = false;
-
-      if (fcmToken != null && fcmToken.isNotEmpty) {
-        await AuthSdk.saveFcmTokenForUser(
-          user: user,
-          fcmToken: fcmToken,
-          deviceType: 'android',
-        );
-
-        fcmTokenSaved = true;
-      }
-
-      debugPrint("VOLUNTEER LOGIN SUCCESS");
-      debugPrint("VOLUNTEER FCM TOKEN SAVED: $fcmTokenSaved");
-
-      if (!mounted) return;
-
-      setState(() => isLoading = false);
-
-      if (!fcmTokenSaved) {
-        showMessage(
-          message: "Login successful, but notification token was not saved.",
-          backgroundColor: Colors.orange,
-        );
-
-        await Future.delayed(const Duration(milliseconds: 500));
-      }
-
-      if (!mounted) return;
-
-      Navigator.pushReplacementNamed(context, AppRoutes.volunteerDashboard);
-    } on SdkException catch (e) {
-      if (!mounted) return;
-
-      setState(() => isLoading = false);
-
-      showMessage(message: e.message);
-    } on FirebaseAuthException catch (e) {
-      if (!mounted) return;
-
-      setState(() => isLoading = false);
-
-      showMessage(message: e.message ?? 'Login failed. Please try again.');
-    } catch (e) {
-      if (!mounted) return;
-
-      setState(() => isLoading = false);
-
-      debugPrint("Volunteer login unknown error: $e");
-
-      showMessage(message: "Login failed. Please try again.");
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    debugPrint("VOLUNTEER LOGIN SCREEN BUILD RUNNING");
-
-    return Scaffold(
-      backgroundColor: const Color(0xFF8B0000),
-      body: Container(
-        width: double.infinity,
-        height: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFF6B0000), Color(0xFF8B0000)],
-          ),
-        ),
-        child: SafeArea(
-          child: SingleChildScrollView(
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Column(
-                children: [
-                  const SizedBox(height: 20),
-
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: IconButton(
-                        icon: const Icon(
-                          Icons.arrow_back_ios_new_rounded,
-                          color: Colors.white,
-                          size: 20,
-                        ),
-                        onPressed: isLoading
-                            ? null
-                            : () {
-                                if (Navigator.canPop(context)) {
-                                  Navigator.pop(context);
-                                } else {
-                                  Navigator.pushReplacementNamed(
-                                    context,
-                                    AppRoutes.roleSelection,
-                                  );
-                                }
-                              },
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  const Text(
-                    "Welcome Back",
-                    style: TextStyle(
-                      fontSize: 34,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 28,
-                      vertical: 10,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.18),
-                      borderRadius: BorderRadius.circular(30),
-                    ),
-                    child: const Text(
-                      "Logging in as Volunteer",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16.5,
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 40),
-
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(30),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            decoration: const BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.horizontal(
-                                left: Radius.circular(30),
-                              ),
-                            ),
-                            child: const Text(
-                              "Login",
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF6B0000),
-                              ),
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: isLoading
-                                ? null
-                                : () => Navigator.pushReplacementNamed(
-                                      context,
-                                      AppRoutes.volunteerRegister,
-                                    ),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              child: const Text(
-                                "Register",
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 30),
-
-                  Container(
-                    decoration: BoxDecoration(
-                      color: whiteColor,
-                      borderRadius: BorderRadius.circular(32),
-                    ),
-                    padding: const EdgeInsets.fromLTRB(24, 36, 24, 40),
-                    child: Column(
-                      children: [
-                        const Text(
-                          "SECURE LOGIN",
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF757575),
-                            letterSpacing: 1.2,
-                          ),
-                        ),
-
-                        const SizedBox(height: 32),
-
-                        _buildTextField(
-                          hint: "Email Address",
-                          icon: Icons.alternate_email,
-                          controller: emailController,
-                          keyboardType: TextInputType.emailAddress,
-                          textInputAction: TextInputAction.next,
-                        ),
-
-                        const SizedBox(height: 16),
-
-                        _buildTextField(
-                          hint: "Password",
-                          icon: Icons.lock_outline,
-                          controller: passwordController,
-                          isPassword: true,
-                          keyboardType: TextInputType.visiblePassword,
-                          textInputAction: TextInputAction.done,
-                          onSubmitted: (_) {
-                            if (!isLoading) {
-                              loginVolunteer();
-                            }
-                          },
-                        ),
-
-                        const SizedBox(height: 8),
-
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: TextButton(
-                            onPressed: isLoading
-                                ? null
-                                : () => Navigator.pushNamed(
-                                      context,
-                                      AppRoutes.volunteerSettings,
-                                    ),
-                            child: const Text(
-                              "Forgot Password?",
-                              style: TextStyle(
-                                color: primaryMaroon,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                        ),
-
-                        const SizedBox(height: 20),
-
-                        SizedBox(
-                          width: double.infinity,
-                          height: 58,
-                          child: ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: primaryMaroon,
-                              disabledBackgroundColor:
-                                  primaryMaroon.withOpacity(0.65),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(18),
-                              ),
-                            ),
-                            onPressed: isLoading ? null : loginVolunteer,
-                            child: isLoading
-                                ? const SizedBox(
-                                    width: 24,
-                                    height: 24,
-                                    child: CircularProgressIndicator(
-                                      color: whiteColor,
-                                      strokeWidth: 2.5,
-                                    ),
-                                  )
-                                : const Text(
-                                    "LOGIN",
-                                    style: TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                      color: whiteColor,
-                                    ),
-                                  ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 40),
-
-                  GestureDetector(
-                    onTap: isLoading
-                        ? null
-                        : () => Navigator.pushNamed(
-                              context,
-                              AppRoutes.helpSupport,
-                            ),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.phone_android, color: whiteColor, size: 24),
-                        SizedBox(width: 10),
-                        Text(
-                          "Login with Phone",
-                          style: TextStyle(
-                            fontSize: 16.5,
-                            color: whiteColor,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 32),
-
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Text(
-                        "New user? ",
-                        style: TextStyle(
-                          fontSize: 15.5,
-                          color: whiteColor70,
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: isLoading
-                            ? null
-                            : () => Navigator.pushReplacementNamed(
-                                  context,
-                                  AppRoutes.volunteerRegister,
-                                ),
-                        child: const Text(
-                          "Register",
-                          style: TextStyle(
-                            fontSize: 15.5,
-                            color: whiteColor,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 30),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTextField({
-    required String hint,
-    required IconData icon,
-    required TextEditingController controller,
-    bool isPassword = false,
-    TextInputType keyboardType = TextInputType.text,
-    TextInputAction textInputAction = TextInputAction.next,
-    void Function(String)? onSubmitted,
-  }) {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8F8F8),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: TextField(
-        controller: controller,
-        obscureText: isPassword && _obscurePassword,
-        keyboardType: keyboardType,
-        textInputAction: textInputAction,
-        enabled: !isLoading,
-        onSubmitted: onSubmitted,
-        decoration: InputDecoration(
-          prefixIcon: Icon(icon, color: primaryMaroon),
-          hintText: hint,
-          hintStyle: const TextStyle(color: Color(0xFF9E9E9E)),
-          border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(
-            vertical: 18,
-            horizontal: 4,
-          ),
-          suffixIcon: isPassword
-              ? IconButton(
-                  icon: Icon(
-                    _obscurePassword
-                        ? Icons.visibility_off
-                        : Icons.visibility,
-                    color: primaryMaroon,
-                  ),
-                  onPressed: isLoading
-                      ? null
-                      : () {
-                          setState(() {
-                            _obscurePassword = !_obscurePassword;
-                          });
-                        },
-                )
-              : null,
-        ),
-      ),
-    );
-  }
-
-  @override
-  void dispose() {
-    emailController.dispose();
-    passwordController.dispose();
-    super.dispose();
-  }
-}
+//         await Future.delayed(const Duration(milliseconds: 700));
+
+//         if (!mounted) return;
+
+//         Navigator.pushReplacementNamed(
+//           context,
+//           AppRoutes.volunteerVerifyEmail,
+//         );
+//         return;
+//       }
+
+//       final String? fcmToken = await _getFcmToken();
+
+//       bool fcmTokenSaved = false;
+
+//       if (fcmToken != null && fcmToken.isNotEmpty) {
+//         await AuthSdk.saveFcmTokenForUser(
+//           user: user,
+//           fcmToken: fcmToken,
+//           deviceType: 'android',
+//         );
+
+//         fcmTokenSaved = true;
+//       }
+
+//       debugPrint("VOLUNTEER LOGIN SUCCESS");
+//       debugPrint("VOLUNTEER FCM TOKEN SAVED: $fcmTokenSaved");
+
+//       if (!mounted) return;
+
+//       setState(() => isLoading = false);
+
+//       if (!fcmTokenSaved) {
+//         showMessage(
+//           message: "Login successful, but notification token was not saved.",
+//           backgroundColor: Colors.orange,
+//         );
+
+//         await Future.delayed(const Duration(milliseconds: 500));
+//       }
+
+//       if (!mounted) return;
+
+//       Navigator.pushReplacementNamed(context, AppRoutes.volunteerDashboard);
+//     } on SdkException catch (e) {
+//       if (!mounted) return;
+
+//       setState(() => isLoading = false);
+
+//       showMessage(message: e.message);
+//     } on FirebaseAuthException catch (e) {
+//       if (!mounted) return;
+
+//       setState(() => isLoading = false);
+
+//       showMessage(message: e.message ?? 'Login failed. Please try again.');
+//     } catch (e) {
+//       if (!mounted) return;
+
+//       setState(() => isLoading = false);
+
+//       debugPrint("Volunteer login unknown error: $e");
+
+//       showMessage(message: "Login failed. Please try again.");
+//     }
+//   }
+
+//   @override
+//   Widget build(BuildContext context) {
+//     debugPrint("VOLUNTEER LOGIN SCREEN BUILD RUNNING");
+
+//     return Scaffold(
+//       backgroundColor: const Color(0xFF8B0000),
+//       body: Container(
+//         width: double.infinity,
+//         height: double.infinity,
+//         decoration: const BoxDecoration(
+//           gradient: LinearGradient(
+//             begin: Alignment.topCenter,
+//             end: Alignment.bottomCenter,
+//             colors: [Color(0xFF6B0000), Color(0xFF8B0000)],
+//           ),
+//         ),
+//         child: SafeArea(
+//           child: SingleChildScrollView(
+//             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+//             child: Padding(
+//               padding: const EdgeInsets.symmetric(horizontal: 24),
+//               child: Column(
+//                 children: [
+//                   const SizedBox(height: 20),
+
+//                   Align(
+//                     alignment: Alignment.centerLeft,
+//                     child: Container(
+//                       decoration: BoxDecoration(
+//                         color: Colors.white.withOpacity(0.15),
+//                         borderRadius: BorderRadius.circular(12),
+//                       ),
+//                       child: IconButton(
+//                         icon: const Icon(
+//                           Icons.arrow_back_ios_new_rounded,
+//                           color: Colors.white,
+//                           size: 20,
+//                         ),
+//                         onPressed: isLoading
+//                             ? null
+//                             : () {
+//                                 if (Navigator.canPop(context)) {
+//                                   Navigator.pop(context);
+//                                 } else {
+//                                   Navigator.pushReplacementNamed(
+//                                     context,
+//                                     AppRoutes.roleSelection,
+//                                   );
+//                                 }
+//                               },
+//                       ),
+//                     ),
+//                   ),
+
+//                   const SizedBox(height: 20),
+
+//                   const Text(
+//                     "Welcome Back",
+//                     style: TextStyle(
+//                       fontSize: 34,
+//                       fontWeight: FontWeight.bold,
+//                       color: Colors.white,
+//                     ),
+//                   ),
+
+//                   const SizedBox(height: 12),
+
+//                   Container(
+//                     padding: const EdgeInsets.symmetric(
+//                       horizontal: 28,
+//                       vertical: 10,
+//                     ),
+//                     decoration: BoxDecoration(
+//                       color: Colors.white.withOpacity(0.18),
+//                       borderRadius: BorderRadius.circular(30),
+//                     ),
+//                     child: const Text(
+//                       "Logging in as Volunteer",
+//                       style: TextStyle(
+//                         color: Colors.white,
+//                         fontSize: 16.5,
+//                       ),
+//                     ),
+//                   ),
+
+//                   const SizedBox(height: 40),
+
+//                   Container(
+//                     decoration: BoxDecoration(
+//                       color: Colors.white.withOpacity(0.15),
+//                       borderRadius: BorderRadius.circular(30),
+//                     ),
+//                     child: Row(
+//                       children: [
+//                         Expanded(
+//                           child: Container(
+//                             padding: const EdgeInsets.symmetric(vertical: 14),
+//                             decoration: const BoxDecoration(
+//                               color: Colors.white,
+//                               borderRadius: BorderRadius.horizontal(
+//                                 left: Radius.circular(30),
+//                               ),
+//                             ),
+//                             child: const Text(
+//                               "Login",
+//                               textAlign: TextAlign.center,
+//                               style: TextStyle(
+//                                 fontSize: 16,
+//                                 fontWeight: FontWeight.bold,
+//                                 color: Color(0xFF6B0000),
+//                               ),
+//                             ),
+//                           ),
+//                         ),
+//                         Expanded(
+//                           child: GestureDetector(
+//                             onTap: isLoading
+//                                 ? null
+//                                 : () => Navigator.pushReplacementNamed(
+//                                       context,
+//                                       AppRoutes.volunteerRegister,
+//                                     ),
+//                             child: Container(
+//                               padding: const EdgeInsets.symmetric(vertical: 14),
+//                               child: const Text(
+//                                 "Register",
+//                                 textAlign: TextAlign.center,
+//                                 style: TextStyle(
+//                                   fontSize: 16,
+//                                   fontWeight: FontWeight.bold,
+//                                   color: Colors.white,
+//                                 ),
+//                               ),
+//                             ),
+//                           ),
+//                         ),
+//                       ],
+//                     ),
+//                   ),
+
+//                   const SizedBox(height: 30),
+
+//                   Container(
+//                     decoration: BoxDecoration(
+//                       color: whiteColor,
+//                       borderRadius: BorderRadius.circular(32),
+//                     ),
+//                     padding: const EdgeInsets.fromLTRB(24, 36, 24, 40),
+//                     child: Column(
+//                       children: [
+//                         _buildTextField(
+//                           hint: "Email Address",
+//                           icon: Icons.alternate_email,
+//                           controller: emailController,
+//                           keyboardType: TextInputType.emailAddress,
+//                           textInputAction: TextInputAction.next,
+//                         ),
+
+//                         const SizedBox(height: 16),
+
+//                         _buildTextField(
+//                           hint: "Password",
+//                           icon: Icons.lock_outline,
+//                           controller: passwordController,
+//                           isPassword: true,
+//                           keyboardType: TextInputType.visiblePassword,
+//                           textInputAction: TextInputAction.done,
+//                           onSubmitted: (_) {
+//                             if (!isLoading) {
+//                               loginVolunteer();
+//                             }
+//                           },
+//                         ),
+
+//                         const SizedBox(height: 8),
+
+//                         Align(
+//                           alignment: Alignment.centerRight,
+//                           child: TextButton(
+//                             onPressed: isLoading
+//                                 ? null
+//                                 : () => Navigator.pushNamed(
+//                                       context,
+//                                       AppRoutes.volunteerSettings,
+//                                     ),
+//                             child: const Text(
+//                               "Forgot Password?",
+//                               style: TextStyle(
+//                                 color: primaryMaroon,
+//                                 fontWeight: FontWeight.w500,
+//                               ),
+//                             ),
+//                           ),
+//                         ),
+
+//                         const SizedBox(height: 20),
+
+//                         SizedBox(
+//                           width: double.infinity,
+//                           height: 58,
+//                           child: ElevatedButton(
+//                             style: ElevatedButton.styleFrom(
+//                               backgroundColor: primaryMaroon,
+//                               disabledBackgroundColor:
+//                                   primaryMaroon.withOpacity(0.65),
+//                               shape: RoundedRectangleBorder(
+//                                 borderRadius: BorderRadius.circular(18),
+//                               ),
+//                             ),
+//                             onPressed: isLoading ? null : loginVolunteer,
+//                             child: isLoading
+//                                 ? const SizedBox(
+//                                     width: 24,
+//                                     height: 24,
+//                                     child: CircularProgressIndicator(
+//                                       color: whiteColor,
+//                                       strokeWidth: 2.5,
+//                                     ),
+//                                   )
+//                                 : const Text(
+//                                     "LOGIN",
+//                                     style: TextStyle(
+//                                       fontSize: 18,
+//                                       fontWeight: FontWeight.bold,
+//                                       color: whiteColor,
+//                                     ),
+//                                   ),
+//                           ),
+//                         ),
+//                       ],
+//                     ),
+//                   ),
+
+//                   const SizedBox(height: 40),
+
+//                   GestureDetector(
+//                     onTap: isLoading
+//                         ? null
+//                         : () => Navigator.pushNamed(
+//                               context,
+//                               AppRoutes.volunteerPhoneLogin,
+//                             ),
+//                     child: const Row(
+//                       mainAxisAlignment: MainAxisAlignment.center,
+//                       children: [
+//                         Icon(Icons.phone_android, color: whiteColor, size: 24),
+//                         SizedBox(width: 10),
+//                         Text(
+//                           "Login with Phone",
+//                           style: TextStyle(
+//                             fontSize: 16.5,
+//                             color: whiteColor,
+//                             fontWeight: FontWeight.w600,
+//                           ),
+//                         ),
+//                       ],
+//                     ),
+//                   ),
+
+//                   const SizedBox(height: 30),
+//                 ],
+//               ),
+//             ),
+//           ),
+//         ),
+//       ),
+//     );
+//   }
+
+//   Widget _buildTextField({
+//     required String hint,
+//     required IconData icon,
+//     required TextEditingController controller,
+//     bool isPassword = false,
+//     TextInputType keyboardType = TextInputType.text,
+//     TextInputAction textInputAction = TextInputAction.next,
+//     void Function(String)? onSubmitted,
+//   }) {
+//     return Container(
+//       decoration: BoxDecoration(
+//         color: const Color(0xFFF8F8F8),
+//         borderRadius: BorderRadius.circular(16),
+//       ),
+//       child: TextField(
+//         controller: controller,
+//         obscureText: isPassword && _obscurePassword,
+//         keyboardType: keyboardType,
+//         textInputAction: textInputAction,
+//         enabled: !isLoading,
+//         onSubmitted: onSubmitted,
+//         decoration: InputDecoration(
+//           prefixIcon: Icon(icon, color: primaryMaroon),
+//           hintText: hint,
+//           hintStyle: const TextStyle(color: Color(0xFF9E9E9E)),
+//           border: InputBorder.none,
+//           contentPadding: const EdgeInsets.symmetric(
+//             vertical: 18,
+//             horizontal: 4,
+//           ),
+//           suffixIcon: isPassword
+//               ? IconButton(
+//                   icon: Icon(
+//                     _obscurePassword
+//                         ? Icons.visibility_off
+//                         : Icons.visibility,
+//                     color: primaryMaroon,
+//                   ),
+//                   onPressed: isLoading
+//                       ? null
+//                       : () {
+//                           setState(() {
+//                             _obscurePassword = !_obscurePassword;
+//                           });
+//                         },
+//                 )
+//               : null,
+//         ),
+//       ),
+//     );
+//   }
+
+//   @override
+//   void dispose() {
+//     emailController.dispose();
+//     passwordController.dispose();
+//     super.dispose();
+//   }
+// }

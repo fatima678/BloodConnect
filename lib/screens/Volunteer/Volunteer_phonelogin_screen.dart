@@ -1,24 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:country_code_picker/country_code_picker.dart';
 
-import '../../../theme.dart';
+import '../../theme.dart';
+import '../../routes.dart';
 import '../../sdk/auth/phone_otp_sdk.dart';
 import '../../sdk/core/sdk_exception.dart';
-import 'Donor_otp_screen.dart';
+import 'Volunteer_otp_screen.dart';
 
-class DonorPhoneLoginPage extends StatefulWidget {
+class VolunteerPhoneLoginPage extends StatefulWidget {
   final String role;
 
-  const DonorPhoneLoginPage({
+  const VolunteerPhoneLoginPage({
     super.key,
-    this.role = 'Donor',
+    this.role = 'Volunteer',
   });
 
   @override
-  State<DonorPhoneLoginPage> createState() => _DonorPhoneLoginPageState();
+  State<VolunteerPhoneLoginPage> createState() =>
+      _VolunteerPhoneLoginPageState();
 }
 
-class _DonorPhoneLoginPageState extends State<DonorPhoneLoginPage>
+class _VolunteerPhoneLoginPageState extends State<VolunteerPhoneLoginPage>
     with TickerProviderStateMixin {
   late AnimationController _fadeInController;
   late AnimationController _jerkController;
@@ -104,6 +106,7 @@ class _DonorPhoneLoginPageState extends State<DonorPhoneLoginPage>
     }
 
     final String phone = _buildFullPhoneNumber();
+    final String normalizedPhone = PhoneOtpSdk.normalizePakistaniPhone(phone);
 
     setState(() {
       _isSendingOtp = true;
@@ -111,7 +114,7 @@ class _DonorPhoneLoginPageState extends State<DonorPhoneLoginPage>
 
     try {
       await PhoneOtpSdk.sendOtp(
-        phone: phone,
+        phone: normalizedPhone,
         onCodeSent: (verificationId, resendToken) {
           if (!mounted) return;
 
@@ -122,8 +125,8 @@ class _DonorPhoneLoginPageState extends State<DonorPhoneLoginPage>
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => DonorOtpScreen(
-                phoneNumber: PhoneOtpSdk.normalizePakistaniPhone(phone),
+              builder: (_) => VolunteerOtpScreen(
+                phoneNumber: normalizedPhone,
                 verificationId: verificationId,
                 resendToken: resendToken,
               ),
@@ -149,7 +152,7 @@ class _DonorPhoneLoginPageState extends State<DonorPhoneLoginPage>
               _isSendingOtp = false;
             });
 
-            Navigator.pushReplacementNamed(context, '/donor-home');
+            AppRoutes.replaceWithVolunteerDashboard(context);
           } catch (e) {
             if (!mounted) return;
 
@@ -176,7 +179,7 @@ class _DonorPhoneLoginPageState extends State<DonorPhoneLoginPage>
         _isSendingOtp = false;
       });
 
-      debugPrint('Donor send OTP error: $e');
+      debugPrint('Volunteer send OTP error: $e');
 
       _showMessage(message: 'Failed to send OTP. Please try again.');
     }

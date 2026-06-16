@@ -1,16 +1,17 @@
 import 'package:flutter/material.dart';
 
 import '../../theme.dart';
+import '../../routes.dart';
 import '../../sdk/auth/phone_otp_sdk.dart';
 import '../../sdk/auth/auth_sdk.dart';
 import '../../sdk/core/sdk_exception.dart';
 
-class DonorOtpScreen extends StatefulWidget {
+class VolunteerOtpScreen extends StatefulWidget {
   final String phoneNumber;
   final String verificationId;
   final int? resendToken;
 
-  const DonorOtpScreen({
+  const VolunteerOtpScreen({
     super.key,
     required this.phoneNumber,
     required this.verificationId,
@@ -18,10 +19,10 @@ class DonorOtpScreen extends StatefulWidget {
   });
 
   @override
-  State<DonorOtpScreen> createState() => _DonorOtpScreenState();
+  State<VolunteerOtpScreen> createState() => _VolunteerOtpScreenState();
 }
 
-class _DonorOtpScreenState extends State<DonorOtpScreen> {
+class _VolunteerOtpScreenState extends State<VolunteerOtpScreen> {
   final List<TextEditingController> _controllers = List.generate(
     6,
     (index) => TextEditingController(),
@@ -67,8 +68,8 @@ class _DonorOtpScreenState extends State<DonorOtpScreen> {
   }
 
   Future<void> _goNextAfterVerification() async {
-    final donorUser = await AuthSdk.currentAppUser(
-      expectedRole: 'donor',
+    final volunteerUser = await AuthSdk.currentAppUser(
+      expectedRole: 'team_volunteer',
     );
 
     if (!mounted) return;
@@ -82,12 +83,12 @@ class _DonorOtpScreenState extends State<DonorOtpScreen> {
 
     if (!mounted) return;
 
-    if (donorUser == null) {
-      Navigator.pushReplacementNamed(context, '/donor-home');
+    if (volunteerUser == null) {
+      AppRoutes.replaceWithVolunteerDashboard(context);
       return;
     }
 
-    Navigator.pushReplacementNamed(context, '/donor-home');
+    AppRoutes.replaceWithVolunteerDashboard(context);
   }
 
   Future<void> _verifyOtp() async {
@@ -117,7 +118,7 @@ class _DonorOtpScreenState extends State<DonorOtpScreen> {
     } on SdkException catch (e) {
       _showMessage(message: e.message);
     } catch (e) {
-      debugPrint('Donor OTP verification error: $e');
+      debugPrint('Volunteer OTP verification error: $e');
       _showMessage(message: 'OTP verification failed. Please try again.');
     } finally {
       if (mounted) {
@@ -159,7 +160,7 @@ class _DonorOtpScreenState extends State<DonorOtpScreen> {
           } on SdkException catch (e) {
             _showMessage(message: e.message);
           } catch (e) {
-            debugPrint('Donor auto verification error: $e');
+            debugPrint('Volunteer auto verification error: $e');
             _showMessage(message: 'Auto verification failed.');
           }
         },
@@ -167,7 +168,7 @@ class _DonorOtpScreenState extends State<DonorOtpScreen> {
     } on SdkException catch (e) {
       _showMessage(message: e.message);
     } catch (e) {
-      debugPrint('Donor resend OTP error: $e');
+      debugPrint('Volunteer resend OTP error: $e');
       _showMessage(message: 'Failed to resend OTP.');
     } finally {
       if (mounted) {

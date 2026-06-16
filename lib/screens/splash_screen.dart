@@ -1,6 +1,7 @@
+import 'package:blood_donation_app/screens/login_screen.dart';
 import 'package:flutter/material.dart';
 import 'dart:async';
-import 'role_screen.dart';
+// import 'role_screen.dart';
 import '../../theme.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -138,7 +139,7 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
         transitionDuration: const Duration(milliseconds: 900),
         pageBuilder: (_, animation, __) => FadeTransition(
           opacity: animation,
-          child: const RoleSelectionScreen(),
+          child: const login(),
         ),
       ),
     );
