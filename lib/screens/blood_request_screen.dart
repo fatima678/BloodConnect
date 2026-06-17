@@ -1,0 +1,1261 @@
+// lib/screens/blood_request_screen.dart
+
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../theme.dart';
+import '../../sdk/patient/blood_request_sdk.dart';
+import '../../sdk/core/sdk_exception.dart';
+// import 'patient_find_nearby_donors.dart';
+
+class BloodRequestScreen extends StatefulWidget {
+  static const String routeName = '/blood_request';
+
+  const BloodRequestScreen({super.key});
+
+  @override
+  State<BloodRequestScreen> createState() =>
+      _BloodRequestScreenState();
+}
+
+class _BloodRequestScreenState extends State<BloodRequestScreen>
+    with SingleTickerProviderStateMixin {
+  final _formKey = GlobalKey<FormState>();
+
+  String? selectedBloodGroup;
+  String? selectedCity;
+
+  String? selectedSeverity;
+  int? selectedRequiredWithinHours;
+  String? selectedCaseType;
+  int? selectedUnitsRequired;
+
+  final String googleMapsApiKey = "AIzaSyCIm0pDpMsEePYylMAZBuZfj8q3cUn3eHc";
+
+  double? latitude;
+  double? longitude;
+
+  bool isGettingLocation = false;
+  bool isSubmitting = false;
+  bool isSearchingLocation = false;
+  bool showSuccessCard = false;
+
+  String debugMessage = 'Blood request debug not started yet.';
+  String? debugLastError;
+  bool showDebugPanel = true;
+
+  late final AnimationController successAnimationController;
+  late final Animation<double> successScaleAnimation;
+  late final Animation<double> successFadeAnimation;
+
+  List<Map<String, dynamic>> placeSuggestions = [];
+
+  final List<String> bloodGroups = [
+    'A+',
+    'B+',
+    'AB+',
+    'O+',
+    'A-',
+    'B-',
+    'AB-',
+    'O-',
+  ];
+
+  final List<String> severityLevels = [
+    'Normal',
+    'Urgent',
+    'Critical',
+    'Emergency',
+  ];
+
+  final List<int> requiredWithinHours = [1, 2, 4, 6, 12, 24];
+
+  final List<String> caseTypes = [
+    'Accident',
+    'Surgery',
+    'Pregnancy / Delivery',
+    'Thalassemia',
+    'Cancer',
+    'Emergency Operation',
+    'Severe Bleeding',
+    'Other',
+  ];
+
+  final List<int> unitsRequired = [1, 2, 3, 4];
+
+  final patientNameController = TextEditingController();
+  final locationController = TextEditingController();
+  final hospitalController = TextEditingController();
+  final caseController = TextEditingController();
+  final doctorNoteController = TextEditingController();
+
+  final Map<String, bool> bloodConstituents = {
+    "Whole Blood": false,
+    "FFP": false,
+    "PCV": false,
+    "PRP": false,
+  };
+
+  @override
+  void initState() {
+    super.initState();
+
+    successAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+
+    successScaleAnimation = CurvedAnimation(
+      parent: successAnimationController,
+      curve: Curves.elasticOut,
+    );
+
+    successFadeAnimation = CurvedAnimation(
+      parent: successAnimationController,
+      curve: Curves.easeIn,
+    );
+  }
+
+
+  void logDebug(String message) {
+    debugPrint('[BloodRequestDebug] $message');
+  }
+
+  void setDebugMessage(String message, {String? error}) {
+    logDebug(message);
+
+    if (!mounted) return;
+
+    setState(() {
+      debugMessage = message;
+      debugLastError = error;
+    });
+  }
+
+  String safeDebugValue(dynamic value) {
+    if (value == null) return 'null';
+
+    final text = value.toString().trim();
+
+    return text.isEmpty ? 'empty' : text;
+  }
+
+  Future<void> searchPlaces(String input) async {
+    final String query = input.trim();
+
+    logDebug('searchPlaces called with query=$query');
+
+    setState(() {
+      latitude = null;
+      longitude = null;
+      selectedCity = null;
+    });
+
+    if (query.length < 3) {
+      setState(() {
+        placeSuggestions = [];
+        isSearchingLocation = false;
+      });
+      return;
+    }
+
+    setState(() => isSearchingLocation = true);
+
+    try {
+      final Uri url = Uri.parse(
+        "https://maps.googleapis.com/maps/api/place/autocomplete/json"
+        "?input=${Uri.encodeComponent(query)}"
+        "&components=country:pk"
+        "&key=$googleMapsApiKey",
+      );
+
+      final http.Response response = await http
+          .get(url)
+          .timeout(const Duration(seconds: 12));
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+
+        if (data["status"] == "OK" && data["predictions"] != null) {
+          final List predictions = data["predictions"];
+
+          setState(() {
+            placeSuggestions = predictions.map<Map<String, dynamic>>((place) {
+              return {
+                "description": place["description"],
+                "place_id": place["place_id"],
+              };
+            }).toList();
+            debugMessage = 'Google suggestions found: ${placeSuggestions.length}';
+            debugLastError = null;
+          });
+
+          logDebug('Google suggestions found: ${predictions.length}');
+        } else {
+          setState(() {
+            placeSuggestions = [];
+            debugMessage = 'Google returned no suggestions. Status: ${data["status"]}';
+            debugLastError = data["error_message"]?.toString();
+          });
+          logDebug('Google autocomplete no suggestions: ${data["status"]} ${data["error_message"]}');
+        }
+      } else {
+        setState(() {
+          placeSuggestions = [];
+          debugMessage = 'Google autocomplete HTTP error: ${response.statusCode}';
+          debugLastError = response.body;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        placeSuggestions = [];
+        debugMessage = 'Google autocomplete exception.';
+        debugLastError = e.toString();
+      });
+      logDebug('Google autocomplete exception: $e');
+    } finally {
+      if (mounted) {
+        setState(() => isSearchingLocation = false);
+      }
+    }
+  }
+
+  Future<void> selectPlaceSuggestion(Map<String, dynamic> place) async {
+    logDebug('selectPlaceSuggestion called: ${place['description']}');
+    final String? placeId = place["place_id"];
+    final String description = place["description"] ?? "";
+
+    if (placeId == null || placeId.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      locationController.text = description;
+      placeSuggestions = [];
+      isGettingLocation = true;
+    });
+
+    try {
+      final Uri url = Uri.parse(
+        "https://maps.googleapis.com/maps/api/place/details/json"
+        "?place_id=$placeId"
+        "&fields=formatted_address,geometry,name,address_components"
+        "&key=$googleMapsApiKey",
+      );
+
+      final http.Response response = await http
+          .get(url)
+          .timeout(const Duration(seconds: 12));
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+
+        if (data["status"] == "OK" && data["result"] != null) {
+          final result = data["result"];
+          final geometry = result["geometry"];
+          final selectedLocation = geometry?["location"];
+
+          if (selectedLocation != null) {
+            final List addressComponents = result["address_components"] ?? [];
+            final String? cityFromComponents = extractCityFromAddressComponents(
+              addressComponents,
+            );
+
+            setState(() {
+              latitude = (selectedLocation["lat"] as num).toDouble();
+              longitude = (selectedLocation["lng"] as num).toDouble();
+              locationController.text =
+                  result["formatted_address"] ?? description;
+              selectedCity =
+                  cityFromComponents ??
+                  extractCityFromLocationText(locationController.text);
+              debugMessage = 'Location selected: city=${safeDebugValue(selectedCity)}, lat=${safeDebugValue(latitude)}, lng=${safeDebugValue(longitude)}';
+              debugLastError = null;
+            });
+
+            logDebug('Location selected city=$selectedCity lat=$latitude lng=$longitude');
+          }
+        }
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Failed to select location: $e")));
+      setDebugMessage('Failed to select location.', error: e.toString());
+    } finally {
+      if (mounted) {
+        setState(() => isGettingLocation = false);
+      }
+    }
+  }
+
+  Future<void> getCurrentLocation() async {
+    setState(() {
+      isGettingLocation = true;
+      placeSuggestions = [];
+    });
+
+    try {
+      final bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+
+      if (!serviceEnabled) {
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Please enable location services.")),
+        );
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Location permission is required.")),
+        );
+        return;
+      }
+
+      final Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      latitude = position.latitude;
+      longitude = position.longitude;
+
+      final String? address = await getAddressFromCoordinates(
+        position.latitude,
+        position.longitude,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        locationController.text =
+            address ??
+            "${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}";
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Failed to get location: $e")));
+    } finally {
+      if (mounted) {
+        setState(() => isGettingLocation = false);
+      }
+    }
+  }
+
+  String? extractCityFromAddressComponents(List components) {
+    final List<String> priorityTypes = [
+      "locality",
+      "administrative_area_level_3",
+      "administrative_area_level_2",
+      "sublocality",
+      "sublocality_level_1",
+      "postal_town",
+      "administrative_area_level_1",
+    ];
+
+    for (final priorityType in priorityTypes) {
+      for (final component in components) {
+        final List types = component["types"] ?? [];
+        final String name = component["long_name"]?.toString().trim() ?? "";
+
+        if (name.isEmpty) continue;
+
+        if (types.contains(priorityType)) {
+          return name;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  String? extractCityFromLocationText(String? location) {
+    if (location == null || location.trim().isEmpty) return null;
+
+    final parts = location.split(',');
+
+    if (parts.length >= 2) {
+      for (int i = 0; i < parts.length; i++) {
+        final city = parts[i].trim();
+
+        if (city.isEmpty) continue;
+
+        final lowerCity = city.toLowerCase();
+
+        if (lowerCity == "pakistan" || lowerCity == "punjab") {
+          continue;
+        }
+
+        if (RegExp(r'^-?\d+(\.\d+)?$').hasMatch(city)) {
+          continue;
+        }
+
+        if (i > 0) {
+          return city;
+        }
+      }
+    }
+
+    for (final part in parts) {
+      final city = part.trim();
+
+      if (city.isNotEmpty && !RegExp(r'^-?\d+(\.\d+)?$').hasMatch(city)) {
+        return city;
+      }
+    }
+
+    return null;
+  }
+
+  Future<String?> getAddressFromCoordinates(
+    double latitude,
+    double longitude,
+  ) async {
+    try {
+      final Uri url = Uri.parse(
+        "https://maps.googleapis.com/maps/api/geocode/json"
+        "?latlng=$latitude,$longitude"
+        "&key=$googleMapsApiKey",
+      );
+
+      final http.Response response = await http
+          .get(url)
+          .timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+
+        if (data["status"] == "OK" &&
+            data["results"] != null &&
+            data["results"].isNotEmpty) {
+          final result = data["results"][0];
+          final String? formattedAddress = result["formatted_address"]
+              ?.toString();
+
+          final List addressComponents = result["address_components"] ?? [];
+          final String? cityFromComponents = extractCityFromAddressComponents(
+            addressComponents,
+          );
+
+          selectedCity =
+              cityFromComponents ??
+              extractCityFromLocationText(formattedAddress);
+
+          return formattedAddress;
+        }
+      }
+
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void clearFormFields() {
+    patientNameController.clear();
+    locationController.clear();
+    hospitalController.clear();
+    caseController.clear();
+    doctorNoteController.clear();
+
+    selectedBloodGroup = null;
+    selectedCity = null;
+    selectedSeverity = null;
+    selectedRequiredWithinHours = null;
+    selectedCaseType = null;
+    selectedUnitsRequired = null;
+
+    latitude = null;
+    longitude = null;
+    placeSuggestions = [];
+
+    for (final key in bloodConstituents.keys) {
+      bloodConstituents[key] = false;
+    }
+
+    _formKey.currentState?.reset();
+  }
+
+  Future<void> showSuccessAndRedirect(String bloodRequestId) async {
+    if (!mounted) return;
+
+    debugPrint("Blood Request ID before redirect: $bloodRequestId");
+
+    setState(() {
+      showSuccessCard = true;
+    });
+
+    successAnimationController.forward(from: 0);
+
+    await Future.delayed(const Duration(milliseconds: 1600));
+
+    if (!mounted) return;
+
+    setState(() {
+      showSuccessCard = false;
+    });
+
+    Navigator.pushNamedAndRemoveUntil(
+      context,
+      '/home',
+      (route) => false,
+    );
+  }
+
+  Future<void> submitBloodRequest() async {
+    logDebug('submitBloodRequest tapped.');
+
+    if (isSubmitting || showSuccessCard) return;
+
+    if (!_formKey.currentState!.validate()) return;
+
+    if (selectedBloodGroup == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please select blood group.")),
+      );
+      return;
+    }
+
+    final selectedConstituents = bloodConstituents.entries
+        .where((entry) => entry.value == true)
+        .map((entry) => entry.key)
+        .toList();
+
+    if (selectedConstituents.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please select blood constituents.")),
+      );
+      return;
+    }
+
+    if (selectedUnitsRequired == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please select units required.")),
+      );
+      return;
+    }
+
+    if (selectedSeverity == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please select severity level.")),
+      );
+      return;
+    }
+
+    if (selectedRequiredWithinHours == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please select required within time.")),
+      );
+      return;
+    }
+
+    if (selectedCaseType == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Please select case type.")));
+      return;
+    }
+
+    if (latitude == null || longitude == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            "Please select location from suggestions or use current location.",
+          ),
+        ),
+      );
+      return;
+    }
+
+    FocusScope.of(context).unfocus();
+
+    setState(() => isSubmitting = true);
+
+    try {
+      setDebugMessage(
+        'Submitting request: bg=${safeDebugValue(selectedBloodGroup)}, city=${safeDebugValue(selectedCity)}, location=${safeDebugValue(locationController.text)}, lat=${safeDebugValue(latitude)}, lng=${safeDebugValue(longitude)}',
+      );
+
+      final String bloodRequestId = await BloodRequestSdk.createBloodRequest(
+        patientName: patientNameController.text.trim(),
+        location: locationController.text.trim(),
+        city:
+            selectedCity ??
+            extractCityFromLocationText(locationController.text.trim()),
+        hospitalName: hospitalController.text.trim(),
+        bloodGroup: selectedBloodGroup!,
+        bloodConstituents: selectedConstituents,
+        caseDescription: caseController.text.trim(),
+        latitude: latitude!,
+        longitude: longitude!,
+
+        unitsRequired: selectedUnitsRequired!,
+        severity: selectedSeverity!.toLowerCase().replaceAll(' ', '_'),
+        requiredWithinHours: selectedRequiredWithinHours!,
+        caseType: selectedCaseType!
+            .toLowerCase()
+            .replaceAll(' / ', '_')
+            .replaceAll(' ', '_'),
+        doctorNote: doctorNoteController.text.trim(),
+      );
+
+      if (!mounted) return;
+
+      logDebug('Blood Request Created Through SDK ID: $bloodRequestId');
+      setDebugMessage('Blood request created successfully. ID: $bloodRequestId');
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('latest_active_blood_request_id', bloodRequestId);
+
+      setState(() {
+        isSubmitting = false;
+      });
+
+      clearFormFields();
+
+      await showSuccessAndRedirect(bloodRequestId);
+    } on SdkException catch (e) {
+      if (!mounted) return;
+
+      setDebugMessage('SDK error while creating blood request.', error: e.message);
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.message)));
+
+      setState(() => isSubmitting = false);
+    } catch (e) {
+      if (!mounted) return;
+
+      logDebug('Blood request submit unknown error: $e');
+      setDebugMessage('Unknown error while creating blood request.', error: e.toString());
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Error: $e")));
+
+      setState(() => isSubmitting = false);
+    }
+  }
+
+
+  Widget buildDebugPanel() {
+    if (!showDebugPanel) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.amber.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.amber.shade700.withOpacity(0.45)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Blood Request Debug Panel',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: () {
+                  setState(() {
+                    showDebugPanel = false;
+                  });
+                },
+                child: const Text('Hide'),
+              ),
+            ],
+          ),
+          Text(debugMessage, style: const TextStyle(fontSize: 12)),
+          const SizedBox(height: 6),
+          Text('Patient name: ${safeDebugValue(patientNameController.text)}', style: const TextStyle(fontSize: 12)),
+          Text('Blood group: ${safeDebugValue(selectedBloodGroup)}', style: const TextStyle(fontSize: 12)),
+          Text('Location: ${safeDebugValue(locationController.text)}', style: const TextStyle(fontSize: 12)),
+          Text('City: ${safeDebugValue(selectedCity)}', style: const TextStyle(fontSize: 12)),
+          Text('Lat: ${safeDebugValue(latitude)} | Lng: ${safeDebugValue(longitude)}', style: const TextStyle(fontSize: 12)),
+          Text('Suggestions: ${placeSuggestions.length}', style: const TextStyle(fontSize: 12)),
+          Text('Severity: ${safeDebugValue(selectedSeverity)} | Within: ${safeDebugValue(selectedRequiredWithinHours)}h', style: const TextStyle(fontSize: 12)),
+          Text('Case type: ${safeDebugValue(selectedCaseType)} | Units: ${safeDebugValue(selectedUnitsRequired)}', style: const TextStyle(fontSize: 12)),
+          if (debugLastError != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Error: $debugLastError',
+              style: const TextStyle(fontSize: 12, color: Colors.red),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget buildLocationSuggestions() {
+    if (placeSuggestions.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(top: 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: ListView.separated(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: placeSuggestions.length,
+        separatorBuilder: (_, __) =>
+            Divider(height: 1, color: Colors.grey.shade200),
+        itemBuilder: (context, index) {
+          final place = placeSuggestions[index];
+
+          return ListTile(
+            dense: true,
+            leading: const Icon(Icons.location_on, color: primaryMaroon),
+            title: Text(
+              place["description"] ?? "",
+              style: const TextStyle(fontSize: 13),
+            ),
+            onTap: isSubmitting || showSuccessCard
+                ? null
+                : () => selectPlaceSuggestion(place),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget buildSuccessCard() {
+    return FadeTransition(
+      opacity: successFadeAnimation,
+      child: ScaleTransition(
+        scale: successScaleAnimation,
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            width: double.infinity,
+            constraints: const BoxConstraints(maxWidth: 380),
+            margin: const EdgeInsets.symmetric(horizontal: 20),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE9F8EF),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: Colors.green.withOpacity(0.35),
+                width: 1.2,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.12),
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: const Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircleAvatar(
+                  radius: 30,
+                  backgroundColor: Colors.green,
+                  child: Icon(Icons.check, color: Colors.white, size: 36),
+                ),
+                SizedBox(height: 14),
+                Text(
+                  "Blood request submitted successfully.",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.green,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    successAnimationController.dispose();
+    patientNameController.dispose();
+    locationController.dispose();
+    hospitalController.dispose();
+    caseController.dispose();
+    doctorNoteController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool disableForm = isSubmitting || showSuccessCard;
+
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: primaryMaroon,
+        iconTheme: const IconThemeData(color: whiteColor),
+        title: const Text("Request Form", style: TextStyle(color: whiteColor)),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: disableForm ? null : () => Navigator.pop(context),
+        ),
+      ),
+      body: Stack(
+        children: [
+          SingleChildScrollView(
+            padding: const EdgeInsets.all(16.0),
+            child: Form(
+              key: _formKey,
+              child: AbsorbPointer(
+                absorbing: disableForm,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    buildDebugPanel(),
+                    _buildSectionCard(
+                      title: "1. Patient Information",
+                      icon: Icons.person,
+                      children: [
+                        _buildLabel("Patient Name"),
+                        const SizedBox(height: 8),
+                        TextFormField(
+                          controller: patientNameController,
+                          decoration: _inputDecoration(
+                            hint: "Enter patient name",
+                          ),
+                          validator: (value) =>
+                              value == null || value.trim().isEmpty
+                              ? "Required"
+                              : null,
+                        ),
+
+                        const SizedBox(height: 20),
+
+                        _buildLabel("Location"),
+                        const SizedBox(height: 8),
+                        TextFormField(
+                          controller: locationController,
+                          decoration: _inputDecoration(
+                            hint: "Type location or tap pin icon",
+                            suffixIcon: IconButton(
+                              icon: isGettingLocation
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(
+                                      Icons.location_pin,
+                                      color: Colors.red,
+                                    ),
+                              onPressed: isGettingLocation
+                                  ? null
+                                  : getCurrentLocation,
+                            ),
+                          ),
+                          onChanged: searchPlaces,
+                          validator: (value) {
+                            if (value == null || value.trim().isEmpty) {
+                              return "Required";
+                            }
+
+                            if (latitude == null || longitude == null) {
+                              return "Please select location from suggestions or use current location";
+                            }
+
+                            return null;
+                          },
+                        ),
+
+                        if (isSearchingLocation)
+                          const Padding(
+                            padding: EdgeInsets.only(top: 8),
+                            child: LinearProgressIndicator(),
+                          ),
+
+                        buildLocationSuggestions(),
+
+                        const SizedBox(height: 20),
+
+                        _buildLabel("Hospital Name"),
+                        const SizedBox(height: 8),
+                        TextFormField(
+                          controller: hospitalController,
+                          decoration: _inputDecoration(
+                            hint: "Enter hospital name",
+                          ),
+                          validator: (value) =>
+                              value == null || value.trim().isEmpty
+                              ? "Required"
+                              : null,
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    _buildSectionCard(
+                      title: "2. Blood Requirement",
+                      icon: Icons.bloodtype,
+                      children: [
+                        _buildLabel("Blood Group"),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 12,
+                          children: bloodGroups.map((group) {
+                            final isSelected = selectedBloodGroup == group;
+
+                            return GestureDetector(
+                              onTap: () =>
+                                  setState(() => selectedBloodGroup = group),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 24,
+                                  vertical: 14,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: isSelected
+                                      ? primaryMaroon
+                                      : Colors.white,
+                                  border: Border.all(
+                                    color: isSelected
+                                        ? primaryMaroon
+                                        : Colors.grey.shade400,
+                                    width: 1.5,
+                                  ),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  group,
+                                  style: TextStyle(
+                                    color: isSelected
+                                        ? Colors.white
+                                        : Colors.black,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+
+                        const SizedBox(height: 24),
+
+                        _buildLabel("Blood Constituents"),
+                        const SizedBox(height: 8),
+                        Container(
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.grey.shade300),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Column(
+                            children: bloodConstituents.keys.map((key) {
+                              return CheckboxListTile(
+                                title: Text(key),
+                                value: bloodConstituents[key],
+                                activeColor: primaryMaroon,
+                                onChanged: (value) => setState(
+                                  () => bloodConstituents[key] = value ?? false,
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ),
+
+                        const SizedBox(height: 20),
+
+                        _buildLabel("Units Required"),
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<int>(
+                          value: selectedUnitsRequired,
+                          decoration: _inputDecoration(
+                            hint: "Select required units",
+                          ),
+                          items: unitsRequired.map((unit) {
+                            return DropdownMenuItem<int>(
+                              value: unit,
+                              child: Text(
+                                unit == 4
+                                    ? "4+ Units"
+                                    : "$unit Unit${unit > 1 ? 's' : ''}",
+                              ),
+                            );
+                          }).toList(),
+                          onChanged: (value) =>
+                              setState(() => selectedUnitsRequired = value),
+                          validator: (value) =>
+                              value == null ? "Required" : null,
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    _buildSectionCard(
+                      title: "3. Emergency Details",
+                      icon: Icons.warning_amber_rounded,
+                      children: [
+                        _buildLabel("Severity Level"),
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<String>(
+                          value: selectedSeverity,
+                          decoration: _inputDecoration(
+                            hint: "Select severity level",
+                          ),
+                          items: severityLevels.map((severity) {
+                            return DropdownMenuItem<String>(
+                              value: severity,
+                              child: Text(severity),
+                            );
+                          }).toList(),
+                          onChanged: (value) =>
+                              setState(() => selectedSeverity = value),
+                          validator: (value) =>
+                              value == null ? "Required" : null,
+                        ),
+
+                        const SizedBox(height: 20),
+
+                        _buildLabel("Required Within"),
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<int>(
+                          value: selectedRequiredWithinHours,
+                          decoration: _inputDecoration(
+                            hint: "Select required time",
+                          ),
+                          items: requiredWithinHours.map((hour) {
+                            return DropdownMenuItem<int>(
+                              value: hour,
+                              child: Text(
+                                "Within $hour hour${hour > 1 ? 's' : ''}",
+                              ),
+                            );
+                          }).toList(),
+                          onChanged: (value) => setState(
+                            () => selectedRequiredWithinHours = value,
+                          ),
+                          validator: (value) =>
+                              value == null ? "Required" : null,
+                        ),
+
+                        const SizedBox(height: 20),
+
+                        _buildLabel("Case Type"),
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<String>(
+                          value: selectedCaseType,
+                          decoration: _inputDecoration(
+                            hint: "Select case type",
+                          ),
+                          items: caseTypes.map((caseType) {
+                            return DropdownMenuItem<String>(
+                              value: caseType,
+                              child: Text(caseType),
+                            );
+                          }).toList(),
+                          onChanged: (value) =>
+                              setState(() => selectedCaseType = value),
+                          validator: (value) =>
+                              value == null ? "Required" : null,
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    _buildSectionCard(
+                      title: "4. Case / Requisition Details",
+                      icon: Icons.description,
+                      children: [
+                        _buildLabel("Case Description"),
+                        const SizedBox(height: 8),
+                        TextFormField(
+                          controller: caseController,
+                          maxLines: 3,
+                          decoration: _inputDecoration(
+                            hint: "eg: Accident, Pregnancy, Surgery details",
+                          ),
+                          validator: (value) =>
+                              value == null || value.trim().isEmpty
+                              ? "Required"
+                              : null,
+                        ),
+
+                        const SizedBox(height: 20),
+
+                        _buildLabel("Doctor Note"),
+                        const SizedBox(height: 8),
+                        TextFormField(
+                          controller: doctorNoteController,
+                          maxLines: 3,
+                          decoration: _inputDecoration(
+                            hint: "Enter doctor note / requisition note",
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 40),
+
+                    SizedBox(
+                      width: double.infinity,
+                      height: 56,
+                      child: ElevatedButton(
+                        onPressed: disableForm ? null : submitBloodRequest,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: primaryMaroon,
+                          disabledBackgroundColor: primaryMaroon.withOpacity(
+                            0.65,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        child: isSubmitting
+                            ? const SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 2.5,
+                                ),
+                              )
+                            : const Text(
+                                "SEND REQUEST",
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          if (showSuccessCard)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black.withOpacity(0.18),
+                alignment: Alignment.center,
+                child: buildSuccessCard(),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionCard({
+    required String title,
+    required IconData icon,
+    required List<Widget> children,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 17,
+                backgroundColor: primaryMaroon.withOpacity(0.10),
+                child: Icon(icon, color: primaryMaroon, size: 19),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: primaryMaroon,
+                    fontSize: 17,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          ...children,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLabel(String text) {
+    return Text(
+      text,
+      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+    );
+  }
+
+  InputDecoration _inputDecoration({String? hint, Widget? suffixIcon}) {
+    return InputDecoration(
+      hintText: hint,
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: primaryMaroon, width: 2.0),
+      ),
+      suffixIcon: suffixIcon,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+    );
+  }
+}

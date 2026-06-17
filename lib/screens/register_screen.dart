@@ -25,8 +25,6 @@ class _registerState extends State<register> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  String selectedRole = 'Patient';
-
   bool isLoading = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
@@ -54,32 +52,6 @@ class _registerState extends State<register> {
         .replaceFirst('Z', '+00:00');
   }
 
-  String _roleValueFromDropdown(String role) {
-    switch (role) {
-      case 'Patient':
-        return 'patient';
-      case 'Donor':
-        return 'donor';
-      case 'Volunteer':
-        return 'team_volunteer';
-      default:
-        throw Exception('Please select a valid role.');
-    }
-  }
-
-  String _roleDisplayName(String role) {
-    switch (role) {
-      case 'patient':
-        return 'Patient';
-      case 'donor':
-        return 'Donor';
-      case 'team_volunteer':
-        return 'Volunteer';
-      default:
-        return 'User';
-    }
-  }
-
   String _firebaseErrorMessage(FirebaseAuthException e) {
     switch (e.code) {
       case 'invalid-email':
@@ -103,8 +75,6 @@ class _registerState extends State<register> {
     final String phone = phoneController.text.trim();
     final String password = passwordController.text.trim();
     final String confirmPassword = confirmPasswordController.text.trim();
-    final String role = _roleValueFromDropdown(selectedRole);
-    final String roleDisplayName = _roleDisplayName(role);
 
     if (name.isEmpty ||
         email.isEmpty ||
@@ -147,15 +117,17 @@ class _registerState extends State<register> {
       final String uid = createdUser.uid;
       final String now = _now();
 
-      await _firestore.collection('pending_registrations').doc(uid).set({
+      // Direct write to global 'users' collection with default structural flags
+      await _firestore.collection('users').doc(uid).set({
         'uid': uid,
         'name': name,
         'email': email,
         'phone': phone,
-        'role': role,
-        'role_display': roleDisplayName,
         'created_at': now,
         'updated_at': now,
+        'status': 'active', // Default status for general user access
+        'blood_group': '',   // Initial empty profile state (to be selected inside app)
+        'points': 0,
       });
 
       await createdUser.sendEmailVerification();
@@ -170,7 +142,7 @@ class _registerState extends State<register> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Registration successful. Verification email sent. Please verify your email, then login.',
+            'Registration successful.',
           ),
           backgroundColor: primaryMaroon,
           behavior: SnackBarBehavior.floating,
@@ -222,7 +194,7 @@ class _registerState extends State<register> {
         child: Column(
           children: [
             SizedBox(
-              height: topPadding + 762,
+              height: topPadding + 690, // Reduced height dynamically as role selection dropdown is removed
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
@@ -366,8 +338,6 @@ class _registerState extends State<register> {
                             textInputAction: TextInputAction.next,
                           ),
                           const SizedBox(height: 12),
-                          _buildRoleDropdown(),
-                          const SizedBox(height: 12),
                           _buildTextField(
                             hint: "Password",
                             icon: Icons.lock_outline_rounded,
@@ -472,68 +442,6 @@ class _registerState extends State<register> {
             SizedBox(height: bottomPadding + 30),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildRoleDropdown() {
-    return Container(
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF0F1F5),
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.groups_2_outlined,
-            color: primaryMaroon.withOpacity(0.68),
-            size: 26,
-          ),
-          const SizedBox(width: 13),
-          Expanded(
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<String>(
-                value: selectedRole,
-                isExpanded: true,
-                dropdownColor: whiteColor,
-                icon: const Icon(
-                  Icons.keyboard_arrow_down_rounded,
-                  color: primaryMaroon,
-                ),
-                style: const TextStyle(
-                  color: blackColor,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w400,
-                ),
-                items: const [
-                  DropdownMenuItem(
-                    value: 'Patient',
-                    child: Text('Patient'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'Donor',
-                    child: Text('Donor'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'Volunteer',
-                    child: Text('Volunteer'),
-                  ),
-                ],
-                onChanged: isLoading
-                    ? null
-                    : (String? value) {
-                        if (value == null) return;
-
-                        setState(() {
-                          selectedRole = value;
-                        });
-                      },
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

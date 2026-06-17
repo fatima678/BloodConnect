@@ -5,14 +5,19 @@ import 'package:flutter/material.dart';
 // import 'screens/role_screen.dart';
 import 'screens/login_screen.dart' as auth_login;
 import 'screens/register_screen.dart' as auth_register;
-import 'screens/email_verification_screen.dart';
+// import 'screens/email_verification_screen.dart';
+import 'screens/login_otp_screen.dart';
+// import 'screens/loginwithphone_screen.dart';
+import 'screens/home_screen.dart';
+import 'screens/blood_request_screen.dart';
+import 'screens/find_nearby_donors_screen.dart';
 
 // 🩺 PATIENT Screens
 // import 'screens/Patient/patient_login_screen.dart';
-import 'screens/Patient/patient_home_screen.dart';
+// import 'screens/Patient/patient_home_screen.dart';
 // import 'screens/Patient/patient_register_screen.dart';
-import 'screens/Patient/Patient_phonelogin_screen.dart';
-import 'screens/Patient/Patient_otp_screen.dart';
+// import 'screens/Patient/Patient_phonelogin_screen.dart';
+// import 'screens/Patient/Patient_otp_screen.dart';
 import 'screens/Patient/patient_forget_password.dart';
 import 'screens/Patient/patient_edit_profile.dart';
 import 'screens/Patient/Patient_Profile_Screen.dart';
@@ -57,9 +62,13 @@ class AppRoutes {
   static const String bloodRequestManagement = '/blood-request-management';
   static const String contactAdmin = '/contact-admin';
   static const String login = '/login';
+  static const String loginOtp = '/login-otp';
   static const String register = '/register';
-  static const String volunteerHome = '/volunteer_dashboard';
-  static const String emailVerification = '/email-verification';
+  static const String home = '/home';
+  static const String bloodRequest = '/blood-request';
+  static const String findNearbyDonors = '/find-nearby-donors';
+  // static const String volunteerHome = '/volunteer_dashboard';
+  // static const String emailVerification = '/email-verification';
 
   // Donor Routes
   static const String donorData = '/donor-data';
@@ -82,15 +91,16 @@ class AppRoutes {
 
   // 🏥 Patient Routes
   // static const String patientLogin = '/patient-login';
-  static const String patientHome = '/patient-home';
+  // static const String patientHome = '/patient-home';
   // static const String patientRegister = '/patient-register';
-  static const String patientPhoneLogin = '/patient-phone-login';
-  static const String patientOtp = '/patient-otp';
+  // static const String patientPhoneLogin = '/patient-phone-login';
+  // static const String patientOtp = '/patient-otp';
   static const String patientForgetPassword = '/patient-forget-password';
   static const String patientEditProfile = '/patient-edit-profile';
   static const String patientProfile = '/patient-profile';
   static const String patientNotifications = '/patient-notifications';
   static const String patientViewDonate = '/patient-view-donate';
+  // static const String patientBloodRequest = '/patient-blood-request';
   static const String patientVerifyEmail = '/patient-verify-email';
 
   // 🎒 Donor Specific Named Routes
@@ -124,62 +134,85 @@ class AppRoutes {
           builder: (_) => const auth_register.register(),
         );
 
-      case emailVerification:
+      // case emailVerification:
+      //   return MaterialPageRoute(
+      //     builder: (_) => const EmailVerificationScreen(),
+      //   );
+
+      case AppRoutes.loginOtp:
+        final args = settings.arguments as Map<String, dynamic>;
+
         return MaterialPageRoute(
-          builder: (_) => const EmailVerificationScreen(),
+          builder: (_) => LoginOtpScreen(
+            uid: args['uid'] as String,
+            phoneNumber: args['phoneNumber'] as String,
+            verificationId: args['verificationId'] as String,
+            resendToken: args['resendToken'] as int?,
+          ),
         );
-        
-      // ==================== PATIENT ====================
+
+      // ==================== GENERAL HOME ====================
+
+      case home:
+        return MaterialPageRoute(builder: (_) => const HomeScreen());
+
+      case bloodRequest:
+        return MaterialPageRoute(builder: (_) => const BloodRequestScreen());
+
+      case findNearbyDonors:
+        return MaterialPageRoute(builder: (_) => const FindNearbyDonorsScreen());
+
+      // ==================== PATIENT OLD ROUTES COMMENTED ====================
       // case patientLogin:
       //   return MaterialPageRoute(builder: (_) => const PatientLoginScreen());
 
-      case patientHome:
-        return MaterialPageRoute(builder: (_) => const PatientHomeScreen());
+      // case patientHome:
+      //   return MaterialPageRoute(builder: (_) => const PatientHomeScreen());
 
       // case patientRegister:
       //   return MaterialPageRoute(builder: (_) => const PatientRegisterScreen());
 
-      case patientPhoneLogin:
-        final String role = settings.arguments as String? ?? 'Patient';
-        return MaterialPageRoute(builder: (_) => PhoneLoginPage(role: role));
+      // case patientPhoneLogin:
+      //   final String role = settings.arguments as String? ?? 'Patient';
+      //   return MaterialPageRoute(builder: (_) => PhoneLoginPage(role: role));
 
-      case patientOtp:
-        final args = settings.arguments;
+      // case patientOtp:
+      //   final args = settings.arguments;
 
-        String phoneNumber = '';
-        String verificationId = '';
-        int? resendToken;
+      //   String phoneNumber = '';
+      //   String verificationId = '';
+      //   int? resendToken;
 
-        if (args is Map) {
-          phoneNumber =
-              args['phoneNumber']?.toString() ??
-              args['phone_number']?.toString() ??
-              '';
+      //   if (args is Map) {
+      //     phoneNumber =
+      //         args['phoneNumber']?.toString() ??
+      //         args['phone_number']?.toString() ??
+      //         '';
 
-          verificationId =
-              args['verificationId']?.toString() ??
-              args['verification_id']?.toString() ??
-              '';
+      //     verificationId =
+      //         args['verificationId']?.toString() ??
+      //         args['verification_id']?.toString() ??
+      //         '';
 
-          final dynamic rawResendToken =
-              args['resendToken'] ?? args['resend_token'];
+      //     final dynamic rawResendToken =
+      //         args['resendToken'] ?? args['resend_token'];
 
-          if (rawResendToken is int) {
-            resendToken = rawResendToken;
-          } else if (rawResendToken != null) {
-            resendToken = int.tryParse(rawResendToken.toString());
-          }
-        } else if (args is String) {
-          phoneNumber = args;
-        }
+      //     if (rawResendToken is int) {
+      //       resendToken = rawResendToken;
+      //     } else if (rawResendToken != null) {
+      //       resendToken = int.tryParse(rawResendToken.toString());
+      //     }
+      //   } else if (args is String) {
+      //     phoneNumber = args;
+      //   }
 
-        return MaterialPageRoute(
-          builder: (_) => OtpScreen(
-            phoneNumber: phoneNumber,
-            verificationId: verificationId,
-            resendToken: resendToken,
-          ),
-        );
+      //   return MaterialPageRoute(
+      //     builder: (_) => OtpScreen(
+      //       phoneNumber: phoneNumber,
+      //       verificationId: verificationId,
+      //       resendToken: resendToken,
+      //     ),
+      //   );
 
       case patientForgetPassword:
         return MaterialPageRoute(
@@ -204,12 +237,8 @@ class AppRoutes {
       case patientViewDonate:
         return MaterialPageRoute(builder: (_) => const ViewDonorsScreen());
 
-      // case AppRoutes.patientVerifyEmail:
-      //   return MaterialPageRoute(
-      //     builder: (_) => const PatientVerifyEmailScreen(),
-      //   );
-
       // ==================== DONOR ====================
+
       // case donorLogin:
       //   return MaterialPageRoute(
       //     builder: (_) => const DonorLoginScreen(role: 'donor'),
@@ -399,20 +428,27 @@ class AppRoutes {
   // static void goToDonorRegister(BuildContext context) =>
   //     Navigator.pushNamed(context, donorRegister);
 
-  static void goToPatientPhoneLogin(BuildContext context, String role) =>
-      Navigator.pushNamed(context, patientPhoneLogin, arguments: role);
+  // static void goToPatientPhoneLogin(BuildContext context, String role) =>
+  //     Navigator.pushNamed(context, patientPhoneLogin, arguments: role);
+
   static void goToDonorPhoneLogin(BuildContext context, String role) =>
       Navigator.pushNamed(context, donorPhoneLogin, arguments: role);
 
-  static void goToPatientOtp(BuildContext context, String phoneNumber) =>
-      Navigator.pushNamed(context, patientOtp, arguments: phoneNumber);
+  // static void goToPatientOtp(BuildContext context, String phoneNumber) =>
+  //     Navigator.pushNamed(context, patientOtp, arguments: phoneNumber);
+
   static void goToDonorOtp(BuildContext context, String phoneNumber) =>
       Navigator.pushNamed(context, donorOtp, arguments: phoneNumber);
 
+  static void replaceWithHome(BuildContext context) =>
+      Navigator.pushReplacementNamed(context, home);
+
   static void replaceWithPatientHome(BuildContext context) =>
-      Navigator.pushReplacementNamed(context, patientHome);
+      Navigator.pushReplacementNamed(context, home);
+
   static void replaceWithDonorHome(BuildContext context) =>
       Navigator.pushReplacementNamed(context, donorHome);
+
   static void replaceWithVolunteerDashboard(BuildContext context) =>
       Navigator.pushReplacementNamed(context, volunteerDashboard);
 }
@@ -420,6 +456,7 @@ class AppRoutes {
 // Global Custom Fallback Route Catch
 class UnknownScreen extends StatelessWidget {
   const UnknownScreen({super.key});
+
   @override
   Widget build(BuildContext context) {
     return const Scaffold(body: Center(child: Text('Page Not Found')));

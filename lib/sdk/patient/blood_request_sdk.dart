@@ -1,9 +1,8 @@
-// lib/sdk/blood_request/blood_request_sdk.dart
+// lib/sdk/patient/blood_request_sdk.dart
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
-import '../auth/auth_sdk.dart';
 import '../core/sdk_exception.dart';
 
 class BloodRequestSdk {
@@ -25,57 +24,26 @@ class BloodRequestSdk {
     'O-',
   ];
 
-  static const List<String> validSeverities = [
-    'normal',
-    'urgent',
-    'critical',
-    'emergency',
-  ];
+  static String _now() {
+    return DateTime.now()
+        .toUtc()
+        .toIso8601String()
+        .replaceFirst('Z', '+00:00');
+  }
 
-  static const List<int> validRequiredWithinHours = [1, 2, 4, 6, 12, 24];
-
-  static int _priorityScore(String severity, int requiredWithinHours) {
-    int severityScore;
-
-    switch (severity) {
-      case 'emergency':
-        severityScore = 100;
-        break;
-      case 'critical':
-        severityScore = 80;
-        break;
-      case 'urgent':
-        severityScore = 60;
-        break;
-      default:
-        severityScore = 30;
-        break;
+  static void _validateText({
+    required String value,
+    required String fieldName,
+  }) {
+    if (value.trim().isEmpty) {
+      throw SdkException('$fieldName is required.');
     }
-
-    int timeScore;
-
-    if (requiredWithinHours <= 1) {
-      timeScore = 30;
-    } else if (requiredWithinHours <= 2) {
-      timeScore = 25;
-    } else if (requiredWithinHours <= 4) {
-      timeScore = 20;
-    } else if (requiredWithinHours <= 6) {
-      timeScore = 15;
-    } else if (requiredWithinHours <= 12) {
-      timeScore = 10;
-    } else {
-      timeScore = 5;
-    }
-
-    final score = severityScore + timeScore;
-
-    return score > 100 ? 100 : score;
   }
 
   static Future<String> createBloodRequest({
     required String patientName,
     required String location,
+    required String? city,
     required String hospitalName,
     required String bloodGroup,
     required List<String> bloodConstituents,
@@ -86,151 +54,98 @@ class BloodRequestSdk {
     required String severity,
     required int requiredWithinHours,
     required String caseType,
-    required String doctorNote,
-    String? city,
+    String? doctorNote,
   }) async {
-    final firebaseUser = _auth.currentUser;
+    final User? currentUser = _auth.currentUser;
 
-    if (firebaseUser == null) {
-      throw const SdkException('Session not found. Please login again.');
+    if (currentUser == null) {
+      throw SdkException('Session not found. Please login again.');
     }
 
-    final patientUser = await AuthSdk.currentAppUser(expectedRole: 'patient');
+    final String uid = currentUser.uid;
 
-    if (patientUser == null) {
-      throw const SdkException(
-        'Patient profile not found. Please login again.',
-      );
-    }
+    _validateText(value: patientName, fieldName: 'Patient name');
+    _validateText(value: location, fieldName: 'Location');
+    _validateText(value: hospitalName, fieldName: 'Hospital name');
+    _validateText(value: caseDescription, fieldName: 'Case description');
+    _validateText(value: severity, fieldName: 'Severity');
+    _validateText(value: caseType, fieldName: 'Case type');
 
-    if (patientUser.status.trim().toLowerCase() != 'active') {
-      throw const SdkException('Your account is not active.');
-    }
-
-    final cleanPatientName = patientName.trim();
-    final cleanLocation = location.trim();
-    final cleanHospitalName = hospitalName.trim();
-    final cleanBloodGroup = bloodGroup.trim().toUpperCase();
-    final cleanCaseDescription = caseDescription.trim();
-    final cleanCity = city?.trim();
-
-    final cleanSeverity = severity.trim().toLowerCase();
-    final cleanCaseType = caseType.trim().toLowerCase();
-    final cleanDoctorNote = doctorNote.trim();
-
-    if (cleanPatientName.isEmpty) {
-      throw const SdkException('Patient name is required.');
-    }
-
-    if (cleanLocation.isEmpty) {
-      throw const SdkException('Location is required.');
-    }
-
-    if (cleanHospitalName.isEmpty) {
-      throw const SdkException('Hospital name is required.');
-    }
-
-    if (!validBloodGroups.contains(cleanBloodGroup)) {
-      throw const SdkException('Please select a valid blood group.');
+    if (!validBloodGroups.contains(bloodGroup)) {
+      throw SdkException('Invalid blood group.');
     }
 
     if (bloodConstituents.isEmpty) {
-      throw const SdkException('Please select blood constituents.');
+      throw SdkException('Please select blood constituents.');
     }
 
-    if (unitsRequired < 1) {
-      throw const SdkException('Please select valid units required.');
+    if (unitsRequired <= 0) {
+      throw SdkException('Invalid units required.');
     }
 
-    if (!validSeverities.contains(cleanSeverity)) {
-      throw const SdkException('Please select valid severity level.');
+    if (requiredWithinHours <= 0) {
+      throw SdkException('Invalid required within time.');
     }
 
-    if (!validRequiredWithinHours.contains(requiredWithinHours)) {
-      throw const SdkException('Please select valid required within time.');
-    }
+    final DocumentReference<Map<String, dynamic>> docRef =
+        _firestore.collection(collectionName).doc();
 
-    if (cleanCaseType.isEmpty) {
-      throw const SdkException('Please select case type.');
-    }
+    final String now = _now();
 
-    if (cleanCaseDescription.isEmpty) {
-      throw const SdkException('Case description is required.');
-    }
+    final Map<String, dynamic> data = {
+      'blood_request_id': docRef.id,
+      'request_id': docRef.id,
 
-    if (latitude < -90 || latitude > 90) {
-      throw const SdkException('Invalid latitude.');
-    }
+      'patient_uid': uid,
+      'user_id': uid,
+      'created_by_uid': uid,
 
-    if (longitude < -180 || longitude > 180) {
-      throw const SdkException('Invalid longitude.');
-    }
+      'patient_name': patientName.trim(),
+      'location': location.trim(),
+      'city': city?.trim() ?? '',
+      'hospital_name': hospitalName.trim(),
 
-    final docRef = _firestore.collection(collectionName).doc();
-    final requestId = docRef.id;
-
-    final nowDateTime = DateTime.now();
-    final now = nowDateTime.toIso8601String();
-    final requiredByTime = nowDateTime
-        .add(Duration(hours: requiredWithinHours))
-        .toIso8601String();
-
-    final isEmergency =
-        cleanSeverity == 'urgent' ||
-        cleanSeverity == 'critical' ||
-        cleanSeverity == 'emergency';
-
-    final priorityScore = _priorityScore(cleanSeverity, requiredWithinHours);
-
-    final data = <String, dynamic>{
-      'id': requestId,
-
-      'patient_uid': firebaseUser.uid,
-      'user_id': firebaseUser.uid,
-
-      'patient_name': cleanPatientName,
-      'patient_email': patientUser.email,
-      'patient_phone': patientUser.phone,
-
-      'location': cleanLocation,
-      'patient_location': cleanLocation,
-
-      'city': cleanCity,
-      'current_city': cleanCity,
-
-      'hospital_name': cleanHospitalName,
-
-      'blood_group': cleanBloodGroup,
+      'blood_group': bloodGroup,
       'blood_constituents': bloodConstituents,
-      'units_required': unitsRequired,
 
-      'severity': cleanSeverity,
-      'required_within_hours': requiredWithinHours,
-      'required_by_time': requiredByTime,
-      'case_type': cleanCaseType,
-
-      'case_description': cleanCaseDescription,
-      'message': cleanCaseDescription,
-
-      'doctor_note': cleanDoctorNote,
-
-      'is_emergency': isEmergency,
-      'priority_score': priorityScore,
+      'case_description': caseDescription.trim(),
+      'doctor_note': doctorNote?.trim() ?? '',
 
       'latitude': latitude,
       'longitude': longitude,
-      'coordinates': {'latitude': latitude, 'longitude': longitude},
+
+      'units_required': unitsRequired,
+      'severity': severity.trim(),
+      'required_within_hours': requiredWithinHours,
+      'case_type': caseType.trim(),
 
       'status': 'pending',
       'request_status': 'pending',
       'is_active': true,
 
+      'accepted_donor_uid': '',
+      'accepted_donor_id': '',
+      'accepted_donor_name': '',
+      'accepted_donor_phone': '',
+
+      'rejected_donor_uid': '',
+      'rejected_donor_id': '',
+      'reject_reason': '',
+
       'created_at': now,
       'updated_at': now,
     };
 
-    await docRef.set(data);
+    try {
+      await docRef.set(data);
 
-    return requestId;
+      return docRef.id;
+    } on FirebaseException catch (e) {
+      throw SdkException(
+        e.message ?? 'Failed to create blood request.',
+      );
+    } catch (e) {
+      throw SdkException('Failed to create blood request.');
+    }
   }
 }

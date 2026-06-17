@@ -5,10 +5,13 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../routes.dart';
 import '../../theme.dart';
 import '../../services/firestore_notification_listener_service.dart';
+import '../../sdk/auth/phone_otp_sdk.dart';
+import '../../sdk/core/sdk_exception.dart';
 
 class login extends StatefulWidget {
   const login({super.key});
@@ -18,7 +21,7 @@ class login extends StatefulWidget {
 }
 
 class _loginState extends State<login> {
-  final TextEditingController emailController = TextEditingController();
+  final TextEditingController phoneController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -26,6 +29,7 @@ class _loginState extends State<login> {
 
   bool isLoading = false;
   bool _obscurePassword = true;
+  bool _isCompletingPhoneLogin = false;
 
   void showMessage({
     required String message,
@@ -50,46 +54,29 @@ class _loginState extends State<login> {
         .replaceFirst('Z', '+00:00');
   }
 
-  String _normalizeRole(String role) {
-    final String value = role.trim().toLowerCase();
+  String _phoneForOtp(String phone) {
+    final String rawPhone = phone.trim().replaceAll(' ', '').replaceAll('-', '');
 
-    if (value == 'patient') return 'patient';
-    if (value == 'donor') return 'donor';
-    if (value == 'volunteer' || value == 'team_volunteer') {
-      return 'team_volunteer';
+    if (rawPhone.startsWith('+')) {
+      return rawPhone;
     }
 
-    throw Exception('Invalid user role.');
+    if (rawPhone.startsWith('0')) {
+      return '+92${rawPhone.substring(1)}';
+    }
+
+    return '+92$rawPhone';
   }
 
-  String _roleCollection(String role) {
-    final String normalizedRole = _normalizeRole(role);
+  bool _isPhoneAlreadyVerified({
+    required User user,
+    required String phone,
+  }) {
+    final String phoneForOtp = _phoneForOtp(phone);
 
-    switch (normalizedRole) {
-      case 'patient':
-        return 'patients';
-      case 'donor':
-        return 'donors';
-      case 'team_volunteer':
-        return 'team_volunteers';
-      default:
-        throw Exception('Invalid user role.');
-    }
-  }
-
-  String _homeRouteFromRole(String role) {
-    final String normalizedRole = _normalizeRole(role);
-
-    switch (normalizedRole) {
-      case 'patient':
-        return AppRoutes.patientHome;
-      case 'donor':
-        return AppRoutes.donorHome;
-      case 'team_volunteer':
-        return AppRoutes.volunteerDashboard;
-      default:
-        throw Exception('Invalid user role.');
-    }
+    return user.phoneNumber != null &&
+        user.phoneNumber!.trim().isNotEmpty &&
+        user.phoneNumber == phoneForOtp;
   }
 
   String _deviceType() {
@@ -103,81 +90,6 @@ class _loginState extends State<login> {
       default:
         return 'android';
     }
-  }
-
-  Future<String?> _readExistingRole(String uid) async {
-    final Map<String, String> roleCollections = {
-      'patient': 'patients',
-      'donor': 'donors',
-      'team_volunteer': 'team_volunteers',
-    };
-
-    for (final entry in roleCollections.entries) {
-      final roleDoc = await _firestore.collection(entry.value).doc(uid).get();
-
-      if (roleDoc.exists) {
-        final data = roleDoc.data();
-        final dynamic roleValue = data?['role'];
-
-        if (roleValue != null && roleValue.toString().trim().isNotEmpty) {
-          return _normalizeRole(roleValue.toString());
-        }
-
-        return entry.key;
-      }
-    }
-
-    return null;
-  }
-
-  Future<String> _createProfileFromPendingRegistration(User user) async {
-    final String uid = user.uid;
-    final String now = _now();
-
-    final pendingDoc =
-        await _firestore.collection('pending_registrations').doc(uid).get();
-
-    if (!pendingDoc.exists || pendingDoc.data() == null) {
-      throw Exception(
-        'User role not found. Please complete registration again.',
-      );
-    }
-
-    final Map<String, dynamic> data = pendingDoc.data()!;
-
-    final String role = _normalizeRole(data['role'].toString());
-    final String collectionName = _roleCollection(role);
-
-    final Map<String, dynamic> userData = {
-      'uid': uid,
-      'name': data['name']?.toString() ?? user.displayName ?? '',
-      'email': data['email']?.toString() ?? user.email ?? '',
-      'phone': data['phone']?.toString() ?? '',
-      'role': role,
-      'role_display': data['role_display']?.toString() ?? '',
-      'status': 'active',
-      'is_email_verified': true,
-      'email_verified_at': now,
-      'created_at': data['created_at']?.toString() ?? now,
-      'updated_at': now,
-    };
-
-    await _firestore.collection(collectionName).doc(uid).set(
-          userData,
-          SetOptions(merge: true),
-        );
-
-    return role;
-  }
-
-  Future<String> _getOrCreateVerifiedUserRole(User user) async {
-    final String? existingRole = await _readExistingRole(user.uid);
-
-    if (existingRole != null && existingRole.trim().isNotEmpty) {
-      return _normalizeRole(existingRole);
-    }
-
-    return _createProfileFromPendingRegistration(user);
   }
 
   Future<String?> _getFcmToken() async {
@@ -207,7 +119,6 @@ class _loginState extends State<login> {
 
   Future<void> _saveFcmToken({
     required String uid,
-    required String role,
   }) async {
     final String? fcmToken = await _getFcmToken();
 
@@ -215,8 +126,6 @@ class _loginState extends State<login> {
       return;
     }
 
-    final String normalizedRole = _normalizeRole(role);
-    final String collectionName = _roleCollection(normalizedRole);
     final String now = _now();
 
     final Map<String, dynamic> tokenData = {
@@ -226,7 +135,7 @@ class _loginState extends State<login> {
       'updated_at': now,
     };
 
-    await _firestore.collection(collectionName).doc(uid).set(
+    await _firestore.collection('users').doc(uid).set(
           tokenData,
           SetOptions(merge: true),
         );
@@ -234,13 +143,19 @@ class _loginState extends State<login> {
 
   String _firebaseErrorMessage(FirebaseAuthException e) {
     switch (e.code) {
-      case 'invalid-email':
-        return 'Please enter a valid email address.';
+      case 'invalid-phone-number':
+        return 'Please enter a valid phone number.';
+      case 'invalid-verification-code':
+        return 'Invalid OTP code.';
+      case 'session-expired':
+        return 'OTP session expired. Please try again.';
+      case 'quota-exceeded':
+        return 'OTP limit exceeded. Please try again later.';
       case 'user-not-found':
-        return 'No account found with this email.';
+        return 'No account found with this phone number.';
       case 'wrong-password':
       case 'invalid-credential':
-        return 'Invalid email or password.';
+        return 'Invalid phone number or password.';
       case 'network-request-failed':
         return 'Network error. Please check your internet.';
       default:
@@ -248,20 +163,244 @@ class _loginState extends State<login> {
     }
   }
 
+  Future<DocumentSnapshot<Map<String, dynamic>>> _getUserByPhone(
+    String phone,
+  ) async {
+    final QuerySnapshot<Map<String, dynamic>> snapshot = await _firestore
+        .collection('users')
+        .where('phone', isEqualTo: phone)
+        .limit(1)
+        .get();
+
+    if (snapshot.docs.isEmpty) {
+      throw Exception('No account found with this phone number.');
+    }
+
+    return snapshot.docs.first;
+  }
+
+  Future<void> _completePhoneLogin({
+    required String uid,
+    required PhoneAuthCredential credential,
+  }) async {
+    if (_isCompletingPhoneLogin) return;
+
+    _isCompletingPhoneLogin = true;
+
+    try {
+      final User? currentUser = _auth.currentUser;
+
+      if (currentUser == null) {
+        throw Exception('Login session not found.');
+      }
+
+      if (currentUser.uid != uid) {
+        throw Exception('Invalid login session.');
+      }
+
+      await currentUser.reload();
+
+      final User? refreshedUser = _auth.currentUser;
+
+      if (refreshedUser == null) {
+        throw Exception('Login session not found.');
+      }
+
+      try {
+        if (refreshedUser.phoneNumber == null ||
+            refreshedUser.phoneNumber!.trim().isEmpty) {
+          await refreshedUser.linkWithCredential(credential);
+        } else {
+          await refreshedUser.reauthenticateWithCredential(credential);
+        }
+      } on FirebaseAuthException catch (e) {
+        if (e.code == 'provider-already-linked') {
+          await refreshedUser.reauthenticateWithCredential(credential);
+        } else if (e.code == 'credential-already-in-use') {
+          throw Exception(
+            'This phone number is already linked with another account.',
+          );
+        } else {
+          rethrow;
+        }
+      }
+
+      final String now = _now();
+
+      await _firestore.collection('users').doc(uid).set(
+        {
+          'is_phone_verified': true,
+          'phone_verified_at': now,
+          'updated_at': now,
+        },
+        SetOptions(merge: true),
+      );
+
+      await refreshedUser.getIdToken(true);
+
+      await _saveFcmToken(uid: uid);
+
+      await FirestoreNotificationListenerService.startForCurrentUser();
+
+      if (!mounted) return;
+
+      setState(() => isLoading = false);
+
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        AppRoutes.home,
+        (route) => false,
+      );
+    } catch (_) {
+      _isCompletingPhoneLogin = false;
+      rethrow;
+    }
+  }
+
+  Future<void> _sendOtp({
+    required String uid,
+    required String phone,
+  }) async {
+    final String phoneForOtp = _phoneForOtp(phone);
+
+    try {
+      await PhoneOtpSdk.sendOtp(
+        phone: phoneForOtp,
+        onCodeSent: (verificationId, resendToken) {
+          if (!mounted || _isCompletingPhoneLogin) return;
+
+          setState(() => isLoading = false);
+
+          Navigator.pushNamed(
+            context,
+            AppRoutes.loginOtp,
+            arguments: {
+              'uid': uid,
+              'phoneNumber': phoneForOtp,
+              'verificationId': verificationId,
+              'resendToken': resendToken,
+            },
+          );
+        },
+        onFailed: (message) async {
+          await _auth.signOut();
+
+          if (!mounted) return;
+
+          setState(() => isLoading = false);
+
+          showMessage(message: message);
+        },
+        onAutoVerified: (credential) async {
+          try {
+            await _completePhoneLogin(
+              uid: uid,
+              credential: credential,
+            );
+          } on FirebaseAuthException catch (e) {
+            await _auth.signOut();
+
+            if (!mounted) return;
+
+            setState(() => isLoading = false);
+
+            showMessage(message: _firebaseErrorMessage(e));
+          } catch (e) {
+            await _auth.signOut();
+
+            if (!mounted) return;
+
+            setState(() => isLoading = false);
+
+            showMessage(message: e.toString().replaceFirst('Exception: ', ''));
+          }
+        },
+      );
+    } on SdkException catch (e) {
+      await _auth.signOut();
+
+      if (!mounted) return;
+
+      setState(() => isLoading = false);
+
+      showMessage(message: e.message);
+    } catch (e) {
+      await _auth.signOut();
+
+      if (!mounted) return;
+
+      setState(() => isLoading = false);
+
+      debugPrint('Send OTP error: $e');
+
+      showMessage(message: 'Failed to send OTP. Please try again.');
+    }
+  }
+
+  Future<void> _goToHomeAfterVerifiedLogin({
+    required String uid,
+  }) async {
+    final String now = _now();
+
+    await _firestore.collection('users').doc(uid).set(
+      {
+        'is_phone_verified': true,
+        'updated_at': now,
+      },
+      SetOptions(merge: true),
+    );
+
+    await _auth.currentUser?.getIdToken(true);
+
+    await _saveFcmToken(uid: uid);
+
+    await FirestoreNotificationListenerService.startForCurrentUser();
+
+    if (!mounted) return;
+
+    setState(() => isLoading = false);
+
+    Navigator.pushNamedAndRemoveUntil(
+      context,
+      AppRoutes.home,
+      (route) => false,
+    );
+  }
+
   Future<void> loginUser() async {
     FocusScope.of(context).unfocus();
 
-    final String email = emailController.text.trim().toLowerCase();
+    final String phone = phoneController.text.trim();
     final String password = passwordController.text.trim();
 
-    if (email.isEmpty || password.isEmpty) {
+    if (phone.isEmpty || password.isEmpty) {
       showMessage(message: "Please fill all fields");
+      return;
+    }
+
+    if (!RegExp(r'^\d{11}$').hasMatch(phone)) {
+      showMessage(message: "Phone number must be exactly 11 digits.");
       return;
     }
 
     setState(() => isLoading = true);
 
     try {
+      final DocumentSnapshot<Map<String, dynamic>> userDoc =
+          await _getUserByPhone(phone);
+
+      final Map<String, dynamic>? data = userDoc.data();
+
+      if (data == null) {
+        throw Exception('User data not found.');
+      }
+
+      final String email = data['email']?.toString().trim().toLowerCase() ?? '';
+
+      if (email.isEmpty) {
+        throw Exception('User email not found.');
+      }
+
       final UserCredential credential = await _auth.signInWithEmailAndPassword(
         email: email,
         password: password,
@@ -281,44 +420,19 @@ class _loginState extends State<login> {
         throw Exception('Login session not found.');
       }
 
-      if (!refreshedUser.emailVerified) {
-        try {
-          await refreshedUser.sendEmailVerification();
-        } catch (_) {}
-
+      if (refreshedUser.uid != userDoc.id) {
         await _auth.signOut();
+        throw Exception('Invalid phone number or password.');
+      }
 
-        if (!mounted) return;
-
-        setState(() => isLoading = false);
-
-        showMessage(
-          message:
-              "Please verify your email first. Verification email sent again.",
-          backgroundColor: Colors.orange,
-        );
+      if (_isPhoneAlreadyVerified(user: refreshedUser, phone: phone)) {
+        await _goToHomeAfterVerifiedLogin(uid: refreshedUser.uid);
         return;
       }
 
-      await refreshedUser.getIdToken(true);
-
-      final String role = await _getOrCreateVerifiedUserRole(refreshedUser);
-
-      await _saveFcmToken(
+      await _sendOtp(
         uid: refreshedUser.uid,
-        role: role,
-      );
-
-      await FirestoreNotificationListenerService.startForCurrentUser();
-
-      if (!mounted) return;
-
-      setState(() => isLoading = false);
-
-      Navigator.pushNamedAndRemoveUntil(
-        context,
-        _homeRouteFromRole(role),
-        (route) => false,
+        phone: phone,
       );
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
@@ -334,31 +448,6 @@ class _loginState extends State<login> {
       debugPrint("Login error: $e");
 
       showMessage(message: e.toString().replaceFirst('Exception: ', ''));
-    }
-  }
-
-  Future<void> forgotPassword() async {
-    final String email = emailController.text.trim().toLowerCase();
-
-    if (email.isEmpty) {
-      showMessage(
-        message: "Please enter email address first.",
-        backgroundColor: Colors.orange,
-      );
-      return;
-    }
-
-    try {
-      await _auth.sendPasswordResetEmail(email: email);
-
-      showMessage(
-        message: "Password reset email sent.",
-        backgroundColor: primaryMaroon,
-      );
-    } on FirebaseAuthException catch (e) {
-      showMessage(message: _firebaseErrorMessage(e));
-    } catch (_) {
-      showMessage(message: "Unable to send password reset email.");
     }
   }
 
@@ -494,11 +583,16 @@ class _loginState extends State<login> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           _buildTextField(
-                            hint: "Email Address",
-                            icon: Icons.alternate_email_rounded,
-                            controller: emailController,
-                            keyboardType: TextInputType.emailAddress,
+                            hint: "Phone Number",
+                            icon: Icons.phone_iphone_rounded,
+                            controller: phoneController,
+                            keyboardType: TextInputType.phone,
                             textInputAction: TextInputAction.next,
+                            maxLength: 11,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              LengthLimitingTextInputFormatter(11),
+                            ],
                           ),
                           const SizedBox(height: 20),
                           _buildTextField(
@@ -513,21 +607,6 @@ class _loginState extends State<login> {
                                 loginUser();
                               }
                             },
-                          ),
-                          const SizedBox(height: 26),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: GestureDetector(
-                              onTap: isLoading ? null : forgotPassword,
-                              child: const Text(
-                                "Forgot Password?",
-                                style: TextStyle(
-                                  color: Color(0xFF9E9E9E),
-                                  fontSize: 15.5,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ),
                           ),
                           const SizedBox(height: 30),
                           SizedBox(
@@ -576,36 +655,6 @@ class _loginState extends State<login> {
               onTap: isLoading
                   ? null
                   : () {
-                      Navigator.pushNamed(
-                        context,
-                        AppRoutes.patientPhoneLogin,
-                      );
-                    },
-              child: const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.phone_iphone_rounded,
-                    color: primaryMaroon,
-                    size: 22,
-                  ),
-                  SizedBox(width: 12),
-                  Text(
-                    "Login with Phone",
-                    style: TextStyle(
-                      color: primaryMaroon,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 36),
-            GestureDetector(
-              onTap: isLoading
-                  ? null
-                  : () {
                       Navigator.pushNamed(context, AppRoutes.register);
                     },
               child: const Row(
@@ -647,6 +696,8 @@ class _loginState extends State<login> {
     TextInputType keyboardType = TextInputType.text,
     TextInputAction textInputAction = TextInputAction.next,
     void Function(String)? onSubmitted,
+    int? maxLength,
+    List<TextInputFormatter>? inputFormatters,
   }) {
     return Container(
       height: 62,
@@ -661,6 +712,8 @@ class _loginState extends State<login> {
         textInputAction: textInputAction,
         enabled: !isLoading,
         onSubmitted: onSubmitted,
+        maxLength: maxLength,
+        inputFormatters: inputFormatters,
         style: const TextStyle(
           color: blackColor,
           fontSize: 16.5,
@@ -680,6 +733,7 @@ class _loginState extends State<login> {
             letterSpacing: 0.4,
           ),
           border: InputBorder.none,
+          counterText: "",
           contentPadding: const EdgeInsets.symmetric(
             vertical: 19,
             horizontal: 4,
@@ -708,7 +762,7 @@ class _loginState extends State<login> {
 
   @override
   void dispose() {
-    emailController.dispose();
+    phoneController.dispose();
     passwordController.dispose();
     super.dispose();
   }
