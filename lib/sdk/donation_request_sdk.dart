@@ -1,12 +1,11 @@
-// lib/sdk/patient/donation_request_sdk.dart
+// lib/sdk/general/donation_request_flow_sdk.dart
 
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/foundation.dart';
 
-import '../core/sdk_exception.dart';
+import 'core/sdk_exception.dart';
 
 class NearbyDonorsResult {
   final Map<String, dynamic> bloodRequest;
@@ -18,8 +17,8 @@ class NearbyDonorsResult {
   });
 }
 
-class DonationRequestSdk {
-  DonationRequestSdk._();
+class DonationRequestFlowSdk {
+  DonationRequestFlowSdk._();
 
   static final FirebaseAuth _auth = FirebaseAuth.instance;
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -28,13 +27,7 @@ class DonationRequestSdk {
   static const String bloodRequestsCollection = 'blood_requests';
   static const String donationRequestsCollection = 'donation_requests';
   static const String donorNotificationsCollection = 'donor_notifications';
-
-  static const bool enableDebugLogs = true;
-
-  static void _debug(String message) {
-    if (!enableDebugLogs) return;
-    debugPrint('[DonationRequestDebug] $message');
-  }
+  static const String notificationsCollection = 'notifications';
 
   static String _now() {
     return DateTime.now()
@@ -99,6 +92,24 @@ class DonationRequestSdk {
     return null;
   }
 
+  static int _readDateMillis(Map<String, dynamic> data) {
+    final value = data['created_at'] ?? data['updated_at'];
+
+    if (value == null) return 0;
+
+    if (value is Timestamp) {
+      return value.toDate().millisecondsSinceEpoch;
+    }
+
+    if (value is DateTime) {
+      return value.millisecondsSinceEpoch;
+    }
+
+    final parsed = DateTime.tryParse(value.toString());
+
+    return parsed?.millisecondsSinceEpoch ?? 0;
+  }
+
   static double _degreeToRadian(double degree) {
     return degree * pi / 180;
   }
@@ -134,18 +145,68 @@ class DonationRequestSdk {
 
     if (parts.isEmpty) return text;
 
-    for (final part in parts) {
-      final city = part.trim();
-      final lowerCity = city.toLowerCase();
+    return parts.first.trim();
+  }
 
-      if (city.isEmpty) continue;
-      if (lowerCity == 'pakistan' || lowerCity == 'punjab') continue;
-      if (RegExp(r'^-?\d+(\.\d+)?$').hasMatch(city)) continue;
+  static Future<DocumentSnapshot<Map<String, dynamic>>?>
+      _currentUserDocSnapshot() async {
+    final User? currentUser = _auth.currentUser;
 
-      return city;
+    if (currentUser == null) {
+      return null;
     }
 
-    return parts.first.trim();
+    final directSnapshot = await _firestore
+        .collection(usersCollection)
+        .doc(currentUser.uid)
+        .get();
+
+    if (directSnapshot.exists) {
+      return directSnapshot;
+    }
+
+    final authUidSnapshot = await _firestore
+        .collection(usersCollection)
+        .where('auth_uid', isEqualTo: currentUser.uid)
+        .limit(1)
+        .get();
+
+    if (authUidSnapshot.docs.isNotEmpty) {
+      return authUidSnapshot.docs.first;
+    }
+
+    final uidSnapshot = await _firestore
+        .collection(usersCollection)
+        .where('uid', isEqualTo: currentUser.uid)
+        .limit(1)
+        .get();
+
+    if (uidSnapshot.docs.isNotEmpty) {
+      return uidSnapshot.docs.first;
+    }
+
+    return null;
+  }
+
+  static Future<Map<String, dynamic>> _currentUserProfile() async {
+    final User? currentUser = _auth.currentUser;
+
+    if (currentUser == null) {
+      throw SdkException('Session not found. Please login again.');
+    }
+
+    final snapshot = await _currentUserDocSnapshot();
+
+    if (snapshot == null || !snapshot.exists || snapshot.data() == null) {
+      throw SdkException('User profile not found. Please complete your profile.');
+    }
+
+    final data = Map<String, dynamic>.from(snapshot.data()!);
+    data['id'] = snapshot.id;
+    data['uid'] = data['uid'] ?? currentUser.uid;
+    data['auth_uid'] = data['auth_uid'] ?? currentUser.uid;
+
+    return data;
   }
 
   static bool _textLocationMatches({
@@ -205,14 +266,14 @@ class DonationRequestSdk {
     return false;
   }
 
-  static String? _unavailableUserReason({
+  static bool _isAvailableUser({
     required String docId,
     required Map<String, dynamic> user,
   }) {
     final User? currentUser = _auth.currentUser;
 
     if (currentUser == null) {
-      return 'no_current_auth_user';
+      return false;
     }
 
     final String authUid = _readString(user, ['auth_uid']);
@@ -221,34 +282,14 @@ class DonationRequestSdk {
     if (docId == currentUser.uid ||
         authUid == currentUser.uid ||
         uid == currentUser.uid) {
-      return 'current_logged_in_user_hidden';
+      return false;
     }
 
     final String status = _readString(user, ['status']).toLowerCase();
 
     if (status.isNotEmpty && status != 'active') {
-      return 'inactive_status_$status';
+      return false;
     }
-
-    final double? latitude = _readDouble(
-      user,
-      [
-        'latitude',
-        'lat',
-        'current_latitude',
-        'currentLatitude',
-      ],
-    );
-
-    final double? longitude = _readDouble(
-      user,
-      [
-        'longitude',
-        'lng',
-        'current_longitude',
-        'currentLongitude',
-      ],
-    );
 
     final String address = _readString(
       user,
@@ -271,47 +312,33 @@ class DonationRequestSdk {
       ],
     );
 
+    final double? latitude = _readDouble(
+      user,
+      [
+        'latitude',
+        'lat',
+        'current_latitude',
+        'currentLatitude',
+      ],
+    );
+
+    final double? longitude = _readDouble(
+      user,
+      [
+        'longitude',
+        'lng',
+        'current_longitude',
+        'currentLongitude',
+      ],
+    );
+
     if ((latitude == null || longitude == null) &&
         address.isEmpty &&
         city.isEmpty) {
-      return 'missing_location_lat_lng_address_city';
+      return false;
     }
 
-    return null;
-  }
-
-  static String _debugUserLabel({
-    required String docId,
-    required Map<String, dynamic> user,
-  }) {
-    final name = _readString(user, ['name', 'user_name', 'full_name']);
-    final phone = _readString(user, ['phone', 'phone_number']);
-    final blood = _readString(
-      user,
-      ['blood_group', 'blood_type', 'bloodType', 'bloodGroup'],
-    );
-    final city = _readString(user, ['city', 'current_city', 'currentCity']);
-    final address = _readString(
-      user,
-      ['address', 'location', 'current_location', 'currentLocation'],
-    );
-    final lat = _readDouble(
-      user,
-      ['latitude', 'lat', 'current_latitude', 'currentLatitude'],
-    );
-    final lng = _readDouble(
-      user,
-      ['longitude', 'lng', 'current_longitude', 'currentLongitude'],
-    );
-
-    return 'docId=$docId, name=$name, phone=$phone, blood=$blood, city=$city, address=$address, lat=$lat, lng=$lng';
-  }
-
-  static void _increaseCounter(
-    Map<String, int> counters,
-    String key,
-  ) {
-    counters[key] = (counters[key] ?? 0) + 1;
+    return true;
   }
 
   static Map<String, dynamic> _userToDonorMap({
@@ -442,7 +469,7 @@ class DonationRequestSdk {
     };
   }
 
-  static List<Map<String, dynamic>> _filterUsersByLocation({
+  static List<Map<String, dynamic>> _filterUsersByLocationAndBloodGroup({
     required QuerySnapshot<Map<String, dynamic>> snapshot,
     String? bloodGroup,
     double? requestLatitude,
@@ -451,35 +478,16 @@ class DonationRequestSdk {
     String? requestLocation,
     double radiusKm = 100,
   }) {
-    final User? currentUser = _auth.currentUser;
-
     final String selectedBloodGroup = _normalizeBloodGroup(bloodGroup);
     final String selectedCity = requestCity?.trim() ?? '';
     final String selectedLocation = requestLocation?.trim() ?? '';
 
-    final Map<String, int> counters = {};
     final List<Map<String, dynamic>> users = [];
-
-    _debug(
-      'FILTER START -> authUid=${currentUser?.uid}, totalUsers=${snapshot.docs.length}, '
-      'optionalBloodFilter=$selectedBloodGroup, requestCity=$selectedCity, '
-      'requestLocation=$selectedLocation, requestLat=$requestLatitude, '
-      'requestLng=$requestLongitude, radiusKm=$radiusKm',
-    );
 
     for (final doc in snapshot.docs) {
       final user = Map<String, dynamic>.from(doc.data());
 
-      final unavailableReason = _unavailableUserReason(
-        docId: doc.id,
-        user: user,
-      );
-
-      if (unavailableReason != null) {
-        _increaseCounter(counters, unavailableReason);
-        _debug(
-          'SKIP USER -> reason=$unavailableReason, ${_debugUserLabel(docId: doc.id, user: user)}',
-        );
+      if (!_isAvailableUser(docId: doc.id, user: user)) {
         continue;
       }
 
@@ -497,10 +505,6 @@ class DonationRequestSdk {
 
       if (selectedBloodGroup.isNotEmpty &&
           userBloodGroup != selectedBloodGroup) {
-        _increaseCounter(counters, 'blood_group_mismatch');
-        _debug(
-          'SKIP USER -> reason=blood_group_mismatch, required=$selectedBloodGroup, userBlood=$userBloodGroup, ${_debugUserLabel(docId: doc.id, user: user)}',
-        );
         continue;
       }
 
@@ -525,13 +529,12 @@ class DonationRequestSdk {
       );
 
       bool shouldShowUser = false;
-      double? distanceKm;
 
       if (requestLatitude != null &&
           requestLongitude != null &&
           userLatitude != null &&
           userLongitude != null) {
-        distanceKm = _calculateDistanceKm(
+        final double distanceKm = _calculateDistanceKm(
           startLatitude: requestLatitude,
           startLongitude: requestLongitude,
           endLatitude: userLatitude,
@@ -539,41 +542,17 @@ class DonationRequestSdk {
         );
 
         shouldShowUser = distanceKm <= radiusKm;
-
-        if (!shouldShowUser) {
-          _increaseCounter(counters, 'outside_radius');
-          _debug(
-            'SKIP USER -> reason=outside_radius, distanceKm=${distanceKm.toStringAsFixed(2)}, radiusKm=$radiusKm, ${_debugUserLabel(docId: doc.id, user: user)}',
-          );
-        }
       } else {
         shouldShowUser = _textLocationMatches(
           user: user,
           requestCity: selectedCity,
           requestLocation: selectedLocation,
         );
-
-        if (!shouldShowUser) {
-          _increaseCounter(counters, 'location_text_mismatch_or_missing_coordinates');
-          _debug(
-            'SKIP USER -> reason=location_text_mismatch_or_missing_coordinates, '
-            'requestCity=$selectedCity, requestLocation=$selectedLocation, '
-            'requestLat=$requestLatitude, requestLng=$requestLongitude, '
-            'userLat=$userLatitude, userLng=$userLongitude, '
-            '${_debugUserLabel(docId: doc.id, user: user)}',
-          );
-        }
       }
 
       if (!shouldShowUser) {
         continue;
       }
-
-      _increaseCounter(counters, 'included_users');
-
-      _debug(
-        'INCLUDE USER -> distanceKm=${distanceKm?.toStringAsFixed(2) ?? 'N/A'}, ${_debugUserLabel(docId: doc.id, user: user)}',
-      );
 
       users.add(
         _userToDonorMap(
@@ -604,10 +583,6 @@ class DonationRequestSdk {
       return aValue.compareTo(bValue);
     });
 
-    _debug(
-      'FILTER END -> returnedUsers=${users.length}, counters=$counters',
-    );
-
     return users;
   }
 
@@ -615,10 +590,6 @@ class DonationRequestSdk {
     required String bloodRequestId,
   }) async {
     final User? currentUser = _auth.currentUser;
-
-    _debug(
-      'FETCH BLOOD REQUEST START -> authUid=${currentUser?.uid}, bloodRequestId=$bloodRequestId',
-    );
 
     if (currentUser == null) {
       throw SdkException('Session not found. Please login again.');
@@ -635,9 +606,6 @@ class DonationRequestSdk {
           .get();
 
       if (!snapshot.exists || snapshot.data() == null) {
-        _debug(
-          'FETCH BLOOD REQUEST FAILED -> request not found, bloodRequestId=$bloodRequestId',
-        );
         throw SdkException('Blood request not found.');
       }
 
@@ -646,54 +614,12 @@ class DonationRequestSdk {
       data['blood_request_id'] = data['blood_request_id'] ?? snapshot.id;
       data['request_id'] = data['request_id'] ?? snapshot.id;
 
-      _debug(
-        'FETCH BLOOD REQUEST SUCCESS -> id=${snapshot.id}, '
-        'bloodGroup=${_readString(data, [
-          'blood_group',
-          'bloodGroup',
-          'patient_blood_group',
-          'patientBloodGroup',
-        ])}, '
-        'location=${_readString(data, [
-          'location',
-          'address',
-          'current_location',
-          'currentLocation',
-          'patient_location',
-          'patientLocation',
-        ])}, '
-        'city=${_readString(data, [
-          'city',
-          'current_city',
-          'currentCity',
-          'patient_city',
-          'patientCity',
-        ])}, '
-        'lat=${_readDouble(data, [
-          'latitude',
-          'lat',
-          'patient_latitude',
-          'patientLatitude',
-        ])}, '
-        'lng=${_readDouble(data, [
-          'longitude',
-          'lng',
-          'patient_longitude',
-          'patientLongitude',
-        ])}, '
-        'status=${_readString(data, ['status', 'request_status'])}',
-      );
-
       return data;
     } on SdkException {
       rethrow;
     } on FirebaseException catch (e) {
-      _debug(
-        'FETCH BLOOD REQUEST FIREBASE ERROR -> code=${e.code}, message=${e.message}',
-      );
       throw SdkException(e.message ?? 'Failed to fetch blood request.');
     } catch (e) {
-      _debug('FETCH BLOOD REQUEST ERROR -> $e');
       throw SdkException('Failed to fetch blood request.');
     }
   }
@@ -708,12 +634,6 @@ class DonationRequestSdk {
   }) async {
     final User? currentUser = _auth.currentUser;
 
-    _debug(
-      'FETCH AVAILABLE USERS START -> authUid=${currentUser?.uid}, optionalBloodFilter=$bloodGroup, '
-      'requestLat=$requestLatitude, requestLng=$requestLongitude, '
-      'requestCity=$requestCity, requestLocation=$requestLocation, radiusKm=$radiusKm',
-    );
-
     if (currentUser == null) {
       throw SdkException('Session not found. Please login again.');
     }
@@ -721,11 +641,7 @@ class DonationRequestSdk {
     try {
       final snapshot = await _firestore.collection(usersCollection).get();
 
-      _debug(
-        'USERS SNAPSHOT FETCHED -> totalUsers=${snapshot.docs.length}',
-      );
-
-      return _filterUsersByLocation(
+      return _filterUsersByLocationAndBloodGroup(
         snapshot: snapshot,
         bloodGroup: bloodGroup,
         requestLatitude: requestLatitude,
@@ -735,12 +651,8 @@ class DonationRequestSdk {
         radiusKm: radiusKm,
       );
     } on FirebaseException catch (e) {
-      _debug(
-        'FETCH AVAILABLE USERS FIREBASE ERROR -> code=${e.code}, message=${e.message}',
-      );
       throw SdkException(e.message ?? 'Failed to fetch nearby users.');
     } catch (e) {
-      _debug('FETCH AVAILABLE USERS ERROR -> $e');
       throw SdkException('Failed to fetch nearby users.');
     }
   }
@@ -753,18 +665,8 @@ class DonationRequestSdk {
     String? requestLocation,
     double radiusKm = 100,
   }) {
-    _debug(
-      'WATCH AVAILABLE USERS START -> optionalBloodFilter=$bloodGroup, '
-      'requestLat=$requestLatitude, requestLng=$requestLongitude, '
-      'requestCity=$requestCity, requestLocation=$requestLocation, radiusKm=$radiusKm',
-    );
-
     return _firestore.collection(usersCollection).snapshots().map((snapshot) {
-      _debug(
-        'WATCH USERS SNAPSHOT -> totalUsers=${snapshot.docs.length}',
-      );
-
-      return _filterUsersByLocation(
+      return _filterUsersByLocationAndBloodGroup(
         snapshot: snapshot,
         bloodGroup: bloodGroup,
         requestLatitude: requestLatitude,
@@ -778,18 +680,13 @@ class DonationRequestSdk {
 
   static Future<NearbyDonorsResult> fetchNearbyDonors({
     required String bloodRequestId,
-    String? bloodGroup,
     double radiusKm = 100,
   }) async {
-    _debug(
-      'FETCH NEARBY USERS START -> bloodRequestId=$bloodRequestId, optionalBloodFilter=$bloodGroup, radiusKm=$radiusKm',
-    );
-
     final bloodRequest = await fetchBloodRequest(
       bloodRequestId: bloodRequestId,
     );
 
-    final String requestBloodGroup = _readString(
+    final String bloodGroup = _readString(
       bloodRequest,
       [
         'blood_group',
@@ -842,12 +739,6 @@ class DonationRequestSdk {
       ],
     );
 
-    _debug(
-      'BLOOD REQUEST META FOR NEARBY -> requestBloodGroup=$requestBloodGroup, optionalBloodFilter=$bloodGroup, city=$city, '
-      'fallbackCity=${city.isNotEmpty ? city : _extractCityFromLocation(location)}, '
-      'location=$location, lat=$latitude, lng=$longitude',
-    );
-
     final donors = await fetchAvailableDonors(
       bloodGroup: bloodGroup,
       requestLatitude: latitude,
@@ -855,10 +746,6 @@ class DonationRequestSdk {
       requestCity: city.isNotEmpty ? city : _extractCityFromLocation(location),
       requestLocation: location,
       radiusKm: radiusKm,
-    );
-
-    _debug(
-      'FETCH NEARBY USERS END -> returnedUsers=${donors.length}',
     );
 
     return NearbyDonorsResult(
@@ -871,10 +758,6 @@ class DonationRequestSdk {
     String? bloodRequestId,
   }) async {
     final User? currentUser = _auth.currentUser;
-
-    _debug(
-      'FETCH REQUEST HISTORY START -> authUid=${currentUser?.uid}, bloodRequestId=$bloodRequestId',
-    );
 
     if (currentUser == null) {
       throw SdkException('Session not found. Please login again.');
@@ -907,18 +790,10 @@ class DonationRequestSdk {
         return bDate.compareTo(aDate);
       });
 
-      _debug(
-        'FETCH REQUEST HISTORY END -> totalHistory=${list.length}',
-      );
-
       return list;
     } on FirebaseException catch (e) {
-      _debug(
-        'FETCH REQUEST HISTORY FIREBASE ERROR -> code=${e.code}, message=${e.message}',
-      );
       throw SdkException(e.message ?? 'Failed to fetch request history.');
     } catch (e) {
-      _debug('FETCH REQUEST HISTORY ERROR -> $e');
       throw SdkException('Failed to fetch request history.');
     }
   }
@@ -929,10 +804,6 @@ class DonationRequestSdk {
     required String message,
   }) async {
     final User? currentUser = _auth.currentUser;
-
-    _debug(
-      'SEND REQUEST START -> authUid=${currentUser?.uid}, bloodRequestId=$bloodRequestId, donorUserDocId=$donorRequestId',
-    );
 
     if (currentUser == null) {
       throw SdkException('Session not found. Please login again.');
@@ -957,9 +828,6 @@ class DonationRequestSdk {
           .get();
 
       if (!userSnapshot.exists || userSnapshot.data() == null) {
-        _debug(
-          'SEND REQUEST FAILED -> donor user doc not found, donorUserDocId=$donorRequestId',
-        );
         throw SdkException('User not found.');
       }
 
@@ -1026,19 +894,23 @@ class DonationRequestSdk {
         'donation_request_id': donationRequestRef.id,
         'blood_request_id': bloodRequestId.trim(),
         'request_id': bloodRequestId.trim(),
+
         'patient_uid': currentUser.uid,
         'patient_id': currentUser.uid,
         'patient_name': patientName,
         'patient_blood_group': bloodGroup,
+
         'donor_uid': actualUserUid,
         'donor_id': actualUserUid,
         'donor_request_id': userSnapshot.id,
         'donor_name': userName,
         'donor_phone': userPhone,
         'donor_blood_group': userBloodGroup,
+
         'message': message.trim().isEmpty
             ? 'Patient needs blood urgently.'
             : message.trim(),
+
         'status': 'pending',
         'request_status': 'pending',
         'phone_visible_to_patient': false,
@@ -1050,12 +922,15 @@ class DonationRequestSdk {
         'notification_id': donorNotificationRef.id,
         'donation_request_id': donationRequestRef.id,
         'blood_request_id': bloodRequestId.trim(),
+
         'patient_uid': currentUser.uid,
         'patient_id': currentUser.uid,
         'patient_name': patientName,
         'patient_blood_group': bloodGroup,
+
         'donor_uid': actualUserUid,
         'donor_id': actualUserUid,
+
         'title': 'New blood request',
         'message': '$patientName needs $bloodGroup blood.',
         'type': 'blood_request',
@@ -1070,20 +945,303 @@ class DonationRequestSdk {
       batch.set(donorNotificationRef, donorNotificationData);
 
       await batch.commit();
+    } on SdkException {
+      rethrow;
+    } on FirebaseException catch (e) {
+      throw SdkException(e.message ?? 'Failed to send request.');
+    } catch (e) {
+      throw SdkException('Failed to send request.');
+    }
+  }
 
-      _debug(
-        'SEND REQUEST SUCCESS -> donationRequestId=${donationRequestRef.id}, donorNotificationId=${donorNotificationRef.id}, donorUid=$actualUserUid',
+  static Stream<List<Map<String, dynamic>>> watchIncomingRequestsForCurrentUser() {
+    final User? currentUser = _auth.currentUser;
+
+    if (currentUser == null) {
+      return Stream.value([]);
+    }
+
+    return _firestore
+        .collection(donationRequestsCollection)
+        .where('donor_uid', isEqualTo: currentUser.uid)
+        .snapshots()
+        .map((snapshot) {
+      final requests = snapshot.docs.map((doc) {
+        final data = Map<String, dynamic>.from(doc.data());
+        data['id'] = doc.id;
+        data['donation_request_id'] = data['donation_request_id'] ?? doc.id;
+        return data;
+      }).toList();
+
+      requests.sort((a, b) {
+        return _readDateMillis(b).compareTo(_readDateMillis(a));
+      });
+
+      return requests;
+    });
+  }
+
+  static Stream<List<Map<String, dynamic>>> watchAcceptedDonorsForCurrentUser() {
+    final User? currentUser = _auth.currentUser;
+
+    if (currentUser == null) {
+      return Stream.value([]);
+    }
+
+    return _firestore
+        .collection(donationRequestsCollection)
+        .where('patient_uid', isEqualTo: currentUser.uid)
+        .snapshots()
+        .map((snapshot) {
+      final requests = snapshot.docs.map((doc) {
+        final data = Map<String, dynamic>.from(doc.data());
+        data['id'] = doc.id;
+        data['donation_request_id'] = data['donation_request_id'] ?? doc.id;
+        return data;
+      }).where((item) {
+        final status = _readString(item, ['status', 'request_status'])
+            .toLowerCase();
+
+        return status == 'accepted';
+      }).toList();
+
+      requests.sort((a, b) {
+        return _readDateMillis(b).compareTo(_readDateMillis(a));
+      });
+
+      return requests;
+    });
+  }
+
+  static Future<void> rejectRequest({
+    required String donationRequestId,
+  }) async {
+    final User? currentUser = _auth.currentUser;
+
+    if (currentUser == null) {
+      throw SdkException('Session not found. Please login again.');
+    }
+
+    if (donationRequestId.trim().isEmpty) {
+      throw SdkException('Donation request ID is required.');
+    }
+
+    try {
+      final requestRef = _firestore
+          .collection(donationRequestsCollection)
+          .doc(donationRequestId.trim());
+
+      final snapshot = await requestRef.get();
+
+      if (!snapshot.exists || snapshot.data() == null) {
+        throw SdkException('Donation request not found.');
+      }
+
+      final data = Map<String, dynamic>.from(snapshot.data()!);
+      final donorUid = _readString(data, ['donor_uid', 'donor_id']);
+
+      if (donorUid.isNotEmpty && donorUid != currentUser.uid) {
+        throw SdkException('You are not allowed to reject this request.');
+      }
+
+      await requestRef.set(
+        {
+          'status': 'rejected',
+          'request_status': 'rejected',
+          'rejected_at': _now(),
+          'updated_at': _now(),
+        },
+        SetOptions(merge: true),
       );
     } on SdkException {
       rethrow;
     } on FirebaseException catch (e) {
-      _debug(
-        'SEND REQUEST FIREBASE ERROR -> code=${e.code}, message=${e.message}',
-      );
-      throw SdkException(e.message ?? 'Failed to send request.');
+      throw SdkException(e.message ?? 'Failed to reject request.');
     } catch (e) {
-      _debug('SEND REQUEST ERROR -> $e');
-      throw SdkException('Failed to send request.');
+      throw SdkException('Failed to reject request.');
+    }
+  }
+
+  static Future<void> acceptRequestWithConsent({
+    required String donationRequestId,
+    required String donorMessage,
+  }) async {
+    final User? currentUser = _auth.currentUser;
+
+    if (currentUser == null) {
+      throw SdkException('Session not found. Please login again.');
+    }
+
+    if (donationRequestId.trim().isEmpty) {
+      throw SdkException('Donation request ID is required.');
+    }
+
+    try {
+      final donorProfile = await _currentUserProfile();
+
+      final requestRef = _firestore
+          .collection(donationRequestsCollection)
+          .doc(donationRequestId.trim());
+
+      final requestSnapshot = await requestRef.get();
+
+      if (!requestSnapshot.exists || requestSnapshot.data() == null) {
+        throw SdkException('Donation request not found.');
+      }
+
+      final request = Map<String, dynamic>.from(requestSnapshot.data()!);
+
+      final donorUid = _readString(request, ['donor_uid', 'donor_id']);
+
+      if (donorUid.isNotEmpty && donorUid != currentUser.uid) {
+        throw SdkException('You are not allowed to accept this request.');
+      }
+
+      final patientUid = _readString(
+        request,
+        ['patient_uid', 'patient_id', 'recipient_uid', 'recipient_id'],
+      );
+
+      if (patientUid.isEmpty) {
+        throw SdkException('Recipient ID is missing in request.');
+      }
+
+      final bloodRequestId = _readString(
+        request,
+        ['blood_request_id', 'request_id'],
+      );
+
+      if (bloodRequestId.isEmpty) {
+        throw SdkException('Blood request ID is missing in donation request.');
+      }
+
+      final donorName = _readString(
+        donorProfile,
+        ['name', 'user_name', 'full_name'],
+      );
+
+      final donorPhone = _readString(
+        donorProfile,
+        ['phone', 'phone_number'],
+      );
+
+      final donorEmail = _readString(donorProfile, ['email']);
+
+      final donorBloodGroup = _readString(
+        donorProfile,
+        ['blood_group', 'blood_type', 'bloodType', 'bloodGroup'],
+      );
+
+      final donorLocation = _readString(
+        donorProfile,
+        ['address', 'location', 'current_location', 'currentLocation'],
+      );
+
+      final patientName = _readString(
+        request,
+        ['patient_name', 'patientName'],
+      );
+
+      final patientBloodGroup = _readString(
+        request,
+        ['patient_blood_group', 'blood_group', 'bloodGroup'],
+      );
+
+      final notificationRef =
+          _firestore.collection(notificationsCollection).doc();
+
+      final bloodRequestRef = _firestore
+          .collection(bloodRequestsCollection)
+          .doc(bloodRequestId.trim());
+
+      final now = _now();
+
+      final batch = _firestore.batch();
+
+      batch.set(
+        requestRef,
+        {
+          'status': 'accepted',
+          'request_status': 'accepted',
+          'accepted_at': now,
+          'updated_at': now,
+
+          'phone_visible_to_patient': true,
+          'donor_consent_accepted': true,
+          'donor_consent_accepted_at': now,
+          'donor_consent_message': donorMessage.trim(),
+
+          'donor_uid': currentUser.uid,
+          'donor_id': currentUser.uid,
+          'donor_name': donorName,
+          'donor_phone': donorPhone,
+          'donor_email': donorEmail,
+          'donor_blood_group': donorBloodGroup,
+          'donor_location': donorLocation,
+        },
+        SetOptions(merge: true),
+      );
+
+      batch.set(
+        bloodRequestRef,
+        {
+          'status': 'accepted',
+          'request_status': 'accepted',
+          'is_active': false,
+
+          'accepted_at': now,
+          'accepted_donation_request_id': donationRequestId.trim(),
+
+          'accepted_donor_id': currentUser.uid,
+          'accepted_donor_uid': currentUser.uid,
+          'accepted_donor_name': donorName,
+          'accepted_donor_phone': donorPhone,
+          'accepted_donor_email': donorEmail,
+          'accepted_donor_blood_group': donorBloodGroup,
+          'accepted_donor_location': donorLocation,
+
+          'updated_at': now,
+        },
+        SetOptions(merge: true),
+      );
+
+      batch.set(notificationRef, {
+        'notification_id': notificationRef.id,
+        'recipient_uid': patientUid,
+        'patient_uid': patientUid,
+        'role': 'patient',
+
+        'donation_request_id': donationRequestId.trim(),
+        'blood_request_id': bloodRequestId.trim(),
+        'type': 'donor_request_accepted',
+
+        'title': 'Donor accepted your request',
+        'message': donorName.isNotEmpty
+            ? '$donorName accepted your $patientBloodGroup blood request.'
+            : 'A donor accepted your blood request.',
+
+        'patient_name': patientName,
+        'patient_blood_group': patientBloodGroup,
+
+        'donor_uid': currentUser.uid,
+        'donor_name': donorName,
+        'donor_phone': donorPhone,
+        'donor_email': donorEmail,
+        'donor_blood_group': donorBloodGroup,
+        'donor_location': donorLocation,
+
+        'is_read': false,
+        'created_at': now,
+        'updated_at': now,
+      });
+
+      await batch.commit();
+    } on SdkException {
+      rethrow;
+    } on FirebaseException catch (e) {
+      throw SdkException(e.message ?? 'Failed to accept request.');
+    } catch (e) {
+      throw SdkException('Failed to accept request.');
     }
   }
 }

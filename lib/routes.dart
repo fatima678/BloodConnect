@@ -11,6 +11,9 @@ import 'screens/login_otp_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/blood_request_screen.dart';
 import 'screens/find_nearby_donors_screen.dart';
+import 'screens/notifications.dart';
+import 'screens/forget_password.dart';
+import 'screens/incoming_blood_requests_screen.dart';
 
 // 🩺 PATIENT Screens
 // import 'screens/Patient/patient_login_screen.dart';
@@ -18,7 +21,7 @@ import 'screens/find_nearby_donors_screen.dart';
 // import 'screens/Patient/patient_register_screen.dart';
 // import 'screens/Patient/Patient_phonelogin_screen.dart';
 // import 'screens/Patient/Patient_otp_screen.dart';
-import 'screens/Patient/patient_forget_password.dart';
+// import 'screens/forget_password.dart';
 import 'screens/Patient/patient_edit_profile.dart';
 import 'screens/Patient/Patient_Profile_Screen.dart';
 import 'screens/Patient/Patient_Notification_Screen.dart';
@@ -67,6 +70,10 @@ class AppRoutes {
   static const String home = '/home';
   static const String bloodRequest = '/blood-request';
   static const String findNearbyDonors = '/find-nearby-donors';
+  static const String notifications = '/notifications';
+  static const String Forgetpassword = '/forget-password';
+  static const String incomingBloodRequests = '/incoming-blood-requests';
+
   // static const String volunteerHome = '/volunteer_dashboard';
   // static const String emailVerification = '/email-verification';
 
@@ -151,6 +158,11 @@ class AppRoutes {
           ),
         );
 
+
+      case notifications:
+        return MaterialPageRoute(
+          builder: (_) => const DonorNotificationScreen(),
+        );  
       // ==================== GENERAL HOME ====================
 
       case home:
@@ -162,6 +174,11 @@ class AppRoutes {
       case findNearbyDonors:
         return MaterialPageRoute(builder: (_) => const FindNearbyDonorsScreen());
 
+      case incomingBloodRequests:
+        return MaterialPageRoute( 
+          builder: (_) => const IncomingBloodRequestsScreen(),
+        );  
+          
       // ==================== PATIENT OLD ROUTES COMMENTED ====================
       // case patientLogin:
       //   return MaterialPageRoute(builder: (_) => const PatientLoginScreen());
@@ -216,7 +233,7 @@ class AppRoutes {
 
       case patientForgetPassword:
         return MaterialPageRoute(
-          builder: (_) => const PatientForgetPasswordScreen(),
+          builder: (_) => const ForgetPasswordScreen(),
         );
 
       case patientEditProfile:

@@ -19,8 +19,7 @@ class ProfileTabContent extends StatefulWidget {
   });
 
   @override
-  State<ProfileTabContent> createState() =>
-      _ProfileTabContentState();
+  State<ProfileTabContent> createState() => _ProfileTabContentState();
 }
 
 class _ProfileTabContentState extends State<ProfileTabContent> {
@@ -264,7 +263,7 @@ class _ProfileTabContentState extends State<ProfileTabContent> {
       await _clearCachedProfile(uid);
       return false;
     } catch (e) {
-      debugPrint('Load cached patient profile error: $e');
+      debugPrint('Load cached profile error: $e');
       return false;
     }
   }
@@ -283,7 +282,7 @@ class _ProfileTabContentState extends State<ProfileTabContent> {
 
       await prefs.remove('cached_patient_profile');
     } catch (e) {
-      debugPrint('Cache patient profile error: $e');
+      debugPrint('Cache profile error: $e');
     }
   }
 
@@ -294,7 +293,7 @@ class _ProfileTabContentState extends State<ProfileTabContent> {
       await prefs.remove(_cacheKey(uid));
       await prefs.remove('cached_patient_profile');
     } catch (e) {
-      debugPrint('Clear cached patient profile error: $e');
+      debugPrint('Clear cached profile error: $e');
     }
   }
 
@@ -354,7 +353,7 @@ class _ProfileTabContentState extends State<ProfileTabContent> {
         userData: user,
       );
     } catch (e) {
-      debugPrint('Fetch patient profile error: $e');
+      debugPrint('Fetch profile error: $e');
 
       if (!mounted) return;
 
@@ -485,14 +484,18 @@ class _ProfileTabContentState extends State<ProfileTabContent> {
                 )
               : _profileMissing
                   ? _buildProfileMissingView(context)
-                  : SingleChildScrollView(
-                      child: Column(
-                        children: [
-                          _buildHeader(context),
-                          _buildStatsCard(),
-                          const SizedBox(height: 20),
-                          _buildBloodRequestStatus(),
-                        ],
+                  : RefreshIndicator(
+                      onRefresh: _refreshProfile,
+                      color: primaryMaroon,
+                      child: SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        child: Column(
+                          children: [
+                            _buildHeader(context),
+                            _buildStatsCard(),
+                            const SizedBox(height: 40),
+                          ],
+                        ),
                       ),
                     ),
     );
@@ -586,7 +589,7 @@ class _ProfileTabContentState extends State<ProfileTabContent> {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.only(top: 50, bottom: 40, left: 20, right: 20),
+      padding: const EdgeInsets.only(top: 34, bottom: 28, left: 20, right: 20),
       decoration: const BoxDecoration(
         color: primaryMaroon,
         borderRadius: BorderRadius.only(
@@ -597,59 +600,68 @@ class _ProfileTabContentState extends State<ProfileTabContent> {
       child: Column(
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              IconButton(
-                icon: const Icon(Icons.arrow_back, color: Colors.white),
-                onPressed: () {
-                  if (widget.onBackToHome != null) {
-                    widget.onBackToHome!();
-                  } else {
-                    Navigator.pop(context);
-                  }
-                },
-              ),
-              const Text(
-                'Your Profile',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
+              SizedBox(
+                width: 48,
+                child: IconButton(
+                  icon: const Icon(Icons.arrow_back, color: Colors.white),
+                  onPressed: () {
+                    if (widget.onBackToHome != null) {
+                      widget.onBackToHome!();
+                    } else {
+                      Navigator.pop(context);
+                    }
+                  },
                 ),
               ),
-              IconButton(
-                icon: const Icon(Icons.edit, color: Colors.white),
-                onPressed: _openProfileEditor,
+              const Expanded(
+                child: Center(
+                  child: Text(
+                    'Profile',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 48,
+                child: IconButton(
+                  icon: const Icon(Icons.edit, color: Colors.white),
+                  onPressed: _openProfileEditor,
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 10),
           CircleAvatar(
-            radius: 50,
+            radius: 43,
             backgroundColor: Colors.white,
             child: CircleAvatar(
-              radius: 47,
+              radius: 40,
               backgroundColor: Colors.grey[200],
               backgroundImage: hasPhoto ? NetworkImage(_photoUrl!) : null,
               child: hasPhoto
                   ? null
                   : Icon(
                       Icons.person,
-                      size: 50,
+                      size: 42,
                       color: Colors.grey[500],
                     ),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           Text(
             _name.isEmpty ? 'User' : _name,
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 22,
+              fontSize: 20,
               fontWeight: FontWeight.bold,
             ),
           ),
-          const SizedBox(height: 15),
+          const SizedBox(height: 10),
           _buildInfoRow(
             Icons.location_on_outlined,
             _address.isEmpty ? 'Location not available' : _address,
@@ -682,7 +694,7 @@ class _ProfileTabContentState extends State<ProfileTabContent> {
           Expanded(
             child: Text(
               text,
-              style: const TextStyle(color: Colors.white, fontSize: 14),
+              style: const TextStyle(color: Colors.white, fontSize: 13.5),
             ),
           ),
           if (hasRefresh)
@@ -744,7 +756,7 @@ class _ProfileTabContentState extends State<ProfileTabContent> {
         Text(
           value,
           style: TextStyle(
-            fontSize: 18,
+            fontSize: 17,
             fontWeight: FontWeight.bold,
             color: isStatus
                 ? inactive
@@ -762,27 +774,6 @@ class _ProfileTabContentState extends State<ProfileTabContent> {
           ),
         ),
       ],
-    );
-  }
-
-  Widget _buildBloodRequestStatus() {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 30),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        border: Border.all(color: Colors.brown.shade800, width: 1.5),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: const Center(
-        child: Text(
-          'No Blood requests found for you',
-          style: TextStyle(
-            color: Colors.brown,
-            fontWeight: FontWeight.bold,
-            fontSize: 14,
-          ),
-        ),
-      ),
     );
   }
 }

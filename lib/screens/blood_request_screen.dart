@@ -44,10 +44,6 @@ class _BloodRequestScreenState extends State<BloodRequestScreen>
   bool isSearchingLocation = false;
   bool showSuccessCard = false;
 
-  String debugMessage = 'Blood request debug not started yet.';
-  String? debugLastError;
-  bool showDebugPanel = true;
-
   late final AnimationController successAnimationController;
   late final Animation<double> successScaleAnimation;
   late final Animation<double> successFadeAnimation;
@@ -56,12 +52,12 @@ class _BloodRequestScreenState extends State<BloodRequestScreen>
 
   final List<String> bloodGroups = [
     'A+',
-    'B+',
-    'AB+',
-    'O+',
     'A-',
+    'B+',
     'B-',
+    'AB+',
     'AB-',
+    'O+',
     'O-',
   ];
 
@@ -120,34 +116,8 @@ class _BloodRequestScreenState extends State<BloodRequestScreen>
     );
   }
 
-
-  void logDebug(String message) {
-    debugPrint('[BloodRequestDebug] $message');
-  }
-
-  void setDebugMessage(String message, {String? error}) {
-    logDebug(message);
-
-    if (!mounted) return;
-
-    setState(() {
-      debugMessage = message;
-      debugLastError = error;
-    });
-  }
-
-  String safeDebugValue(dynamic value) {
-    if (value == null) return 'null';
-
-    final text = value.toString().trim();
-
-    return text.isEmpty ? 'empty' : text;
-  }
-
   Future<void> searchPlaces(String input) async {
     final String query = input.trim();
-
-    logDebug('searchPlaces called with query=$query');
 
     setState(() {
       latitude = null;
@@ -192,34 +162,23 @@ class _BloodRequestScreenState extends State<BloodRequestScreen>
                 "place_id": place["place_id"],
               };
             }).toList();
-            debugMessage = 'Google suggestions found: ${placeSuggestions.length}';
-            debugLastError = null;
           });
-
-          logDebug('Google suggestions found: ${predictions.length}');
         } else {
           setState(() {
             placeSuggestions = [];
-            debugMessage = 'Google returned no suggestions. Status: ${data["status"]}';
-            debugLastError = data["error_message"]?.toString();
           });
-          logDebug('Google autocomplete no suggestions: ${data["status"]} ${data["error_message"]}');
         }
       } else {
         setState(() {
           placeSuggestions = [];
-          debugMessage = 'Google autocomplete HTTP error: ${response.statusCode}';
-          debugLastError = response.body;
         });
       }
     } catch (e) {
       if (!mounted) return;
+
       setState(() {
         placeSuggestions = [];
-        debugMessage = 'Google autocomplete exception.';
-        debugLastError = e.toString();
       });
-      logDebug('Google autocomplete exception: $e');
     } finally {
       if (mounted) {
         setState(() => isSearchingLocation = false);
@@ -228,7 +187,6 @@ class _BloodRequestScreenState extends State<BloodRequestScreen>
   }
 
   Future<void> selectPlaceSuggestion(Map<String, dynamic> place) async {
-    logDebug('selectPlaceSuggestion called: ${place['description']}');
     final String? placeId = place["place_id"];
     final String description = place["description"] ?? "";
 
@@ -278,11 +236,7 @@ class _BloodRequestScreenState extends State<BloodRequestScreen>
               selectedCity =
                   cityFromComponents ??
                   extractCityFromLocationText(locationController.text);
-              debugMessage = 'Location selected: city=${safeDebugValue(selectedCity)}, lat=${safeDebugValue(latitude)}, lng=${safeDebugValue(longitude)}';
-              debugLastError = null;
             });
-
-            logDebug('Location selected city=$selectedCity lat=$latitude lng=$longitude');
           }
         }
       }
@@ -292,7 +246,6 @@ class _BloodRequestScreenState extends State<BloodRequestScreen>
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text("Failed to select location: $e")));
-      setDebugMessage('Failed to select location.', error: e.toString());
     } finally {
       if (mounted) {
         setState(() => isGettingLocation = false);
@@ -503,8 +456,6 @@ class _BloodRequestScreenState extends State<BloodRequestScreen>
   Future<void> showSuccessAndRedirect(String bloodRequestId) async {
     if (!mounted) return;
 
-    debugPrint("Blood Request ID before redirect: $bloodRequestId");
-
     setState(() {
       showSuccessCard = true;
     });
@@ -527,8 +478,6 @@ class _BloodRequestScreenState extends State<BloodRequestScreen>
   }
 
   Future<void> submitBloodRequest() async {
-    logDebug('submitBloodRequest tapped.');
-
     if (isSubmitting || showSuccessCard) return;
 
     if (!_formKey.currentState!.validate()) return;
@@ -596,10 +545,6 @@ class _BloodRequestScreenState extends State<BloodRequestScreen>
     setState(() => isSubmitting = true);
 
     try {
-      setDebugMessage(
-        'Submitting request: bg=${safeDebugValue(selectedBloodGroup)}, city=${safeDebugValue(selectedCity)}, location=${safeDebugValue(locationController.text)}, lat=${safeDebugValue(latitude)}, lng=${safeDebugValue(longitude)}',
-      );
-
       final String bloodRequestId = await BloodRequestSdk.createBloodRequest(
         patientName: patientNameController.text.trim(),
         location: locationController.text.trim(),
@@ -625,9 +570,6 @@ class _BloodRequestScreenState extends State<BloodRequestScreen>
 
       if (!mounted) return;
 
-      logDebug('Blood Request Created Through SDK ID: $bloodRequestId');
-      setDebugMessage('Blood request created successfully. ID: $bloodRequestId');
-
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('latest_active_blood_request_id', bloodRequestId);
 
@@ -641,8 +583,6 @@ class _BloodRequestScreenState extends State<BloodRequestScreen>
     } on SdkException catch (e) {
       if (!mounted) return;
 
-      setDebugMessage('SDK error while creating blood request.', error: e.message);
-
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(e.message)));
@@ -651,74 +591,12 @@ class _BloodRequestScreenState extends State<BloodRequestScreen>
     } catch (e) {
       if (!mounted) return;
 
-      logDebug('Blood request submit unknown error: $e');
-      setDebugMessage('Unknown error while creating blood request.', error: e.toString());
-
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text("Error: $e")));
 
       setState(() => isSubmitting = false);
     }
-  }
-
-
-  Widget buildDebugPanel() {
-    if (!showDebugPanel) return const SizedBox.shrink();
-
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.amber.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.amber.shade700.withOpacity(0.45)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'Blood Request Debug Panel',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                  ),
-                ),
-              ),
-              TextButton(
-                onPressed: () {
-                  setState(() {
-                    showDebugPanel = false;
-                  });
-                },
-                child: const Text('Hide'),
-              ),
-            ],
-          ),
-          Text(debugMessage, style: const TextStyle(fontSize: 12)),
-          const SizedBox(height: 6),
-          Text('Patient name: ${safeDebugValue(patientNameController.text)}', style: const TextStyle(fontSize: 12)),
-          Text('Blood group: ${safeDebugValue(selectedBloodGroup)}', style: const TextStyle(fontSize: 12)),
-          Text('Location: ${safeDebugValue(locationController.text)}', style: const TextStyle(fontSize: 12)),
-          Text('City: ${safeDebugValue(selectedCity)}', style: const TextStyle(fontSize: 12)),
-          Text('Lat: ${safeDebugValue(latitude)} | Lng: ${safeDebugValue(longitude)}', style: const TextStyle(fontSize: 12)),
-          Text('Suggestions: ${placeSuggestions.length}', style: const TextStyle(fontSize: 12)),
-          Text('Severity: ${safeDebugValue(selectedSeverity)} | Within: ${safeDebugValue(selectedRequiredWithinHours)}h', style: const TextStyle(fontSize: 12)),
-          Text('Case type: ${safeDebugValue(selectedCaseType)} | Units: ${safeDebugValue(selectedUnitsRequired)}', style: const TextStyle(fontSize: 12)),
-          if (debugLastError != null) ...[
-            const SizedBox(height: 6),
-            Text(
-              'Error: $debugLastError',
-              style: const TextStyle(fontSize: 12, color: Colors.red),
-            ),
-          ],
-        ],
-      ),
-    );
   }
 
   Widget buildLocationSuggestions() {
@@ -847,7 +725,6 @@ class _BloodRequestScreenState extends State<BloodRequestScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    buildDebugPanel(),
                     _buildSectionCard(
                       title: "1. Patient Information",
                       icon: Icons.person,

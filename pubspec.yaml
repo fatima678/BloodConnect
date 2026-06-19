@@ -8,8 +8,8 @@ environment:
   sdk: ^3.11.4
 
 dependencies:
-# flutter:
-# sdk: flutter
+  flutter:
+    sdk: flutter
 
   cupertino_icons: ^1.0.8
   country_code_picker: ^3.4.1
@@ -19,7 +19,6 @@ dependencies:
   geolocator: ^13.0.1
   geocoding: ^4.0.0
 
-  
   http: ^1.2.2
   url_launcher: ^6.3.0
   firebase_auth: 5.7.0
@@ -31,7 +30,6 @@ dependencies:
   flutter_local_notifications: ^21.0.0
   cloud_firestore: 5.6.12
 
-  
   shimmer: ^3.0.0
   shared_preferences: ^2.5.5
   image_picker: ^1.2.2
@@ -41,7 +39,16 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "lib/assets/icon.png"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "lib/assets/icon.png"
 
 flutter:
   uses-material-design: true
@@ -50,3 +57,4 @@ flutter:
     - lib/assets/Login-pana.png
     - lib/assets/otp.jpg
     - lib/assets/blood_donation.png
+    - lib/assets/icon.png

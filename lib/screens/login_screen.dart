@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:blood_donation_app/screens/forget_password.dart';
+
 import '../../routes.dart';
 import '../../theme.dart';
 import '../../services/firestore_notification_listener_service.dart';
@@ -451,6 +453,15 @@ class _loginState extends State<login> {
     }
   }
 
+  void _openForgetPasswordScreen() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const ForgetPasswordScreen(),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final double topPadding = MediaQuery.of(context).padding.top;
@@ -467,7 +478,7 @@ class _loginState extends State<login> {
         child: Column(
           children: [
             SizedBox(
-              height: topPadding + 570,
+              height: topPadding + 595,
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
@@ -608,7 +619,24 @@ class _loginState extends State<login> {
                               }
                             },
                           ),
-                          const SizedBox(height: 30),
+                          const SizedBox(height: 12),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: GestureDetector(
+                              onTap: isLoading ? null : _openForgetPasswordScreen,
+                              child: const Text(
+                                "Forgot Password?",
+                                style: TextStyle(
+                                  color: primaryMaroon,
+                                  fontSize: 14.5,
+                                  fontWeight: FontWeight.w700,
+                                  decoration: TextDecoration.underline,
+                                  decorationColor: primaryMaroon,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 24),
                           SizedBox(
                             width: double.infinity,
                             height: 58,

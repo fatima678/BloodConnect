@@ -1,22 +1,25 @@
+import 'dart:async';
+
 import 'package:carousel_slider/carousel_slider.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+
 import 'package:blood_donation_app/theme.dart';
 import 'package:blood_donation_app/services/auth_token_service.dart';
 import 'package:blood_donation_app/sdk/patient/patient_banner_sdk.dart';
+import 'package:blood_donation_app/screens/contact_donors_screen.dart';
+import 'package:blood_donation_app/screens/find_nearby_donors_screen.dart';
+import 'package:blood_donation_app/screens/notifications.dart';
+import 'package:blood_donation_app/screens/rate_us_screen.dart';
+import 'package:blood_donation_app/screens/about_app_screen.dart';
+import 'package:blood_donation_app/screens/help_feedback_screen.dart';
+import 'package:blood_donation_app/screens/incoming_blood_requests_screen.dart';
+import 'package:blood_donation_app/screens/setting_screen.dart';
 
-import '../screens/Patient/Patient_Search_Screen.dart';
-import '../screens/Patient/Patient_Notification_Screen.dart';
-import '../screens/Patient/patient_blood_bank_map_screen.dart';
 import 'blood_request_screen.dart';
-// import '../screens/Patient/Patient_Profile_Screen.dart';
-import '../screens/Patient/Patient_Public_Request_Nearby.dart';
-import '../screens/Patient/Patient_find_volunteer_screen.dart';
-import '../screens/Patient/patient_find_nearby_donors.dart';
-import '../screens/Patient/patient_Blood_Bank_Screen.dart';
+import '../screens/Blood_Bank_Screen.dart';
 import '../screens/profile_screen.dart';
-
 
 class HomeScreen extends StatefulWidget {
   static const String routeName = '/home';
@@ -30,6 +33,11 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
   String _currentUserName = "Blood Connect";
+  String _currentUserPhotoUrl = "";
+  bool _isLoggingOut = false;
+
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
+      _userProfileSubscription;
 
   @override
   void initState() {
@@ -37,33 +45,161 @@ class _HomeScreenState extends State<HomeScreen> {
     _listenToUserData();
   }
 
-  // Realtime user verification status tracker to safely handle dashboard header names
+  String _readString(Map<String, dynamic> data, List<String> keys) {
+    for (final key in keys) {
+      final value = data[key];
+
+      if (value == null) continue;
+
+      final text = value.toString().trim();
+
+      if (text.isNotEmpty && text.toLowerCase() != 'null') {
+        return text;
+      }
+    }
+
+    return '';
+  }
+
+  String _profileInitial() {
+    final String name = _currentUserName.trim();
+
+    if (name.isEmpty || name == "Blood Connect") {
+      return "B";
+    }
+
+    return name.characters.first.toUpperCase();
+  }
+
   void _listenToUserData() {
     final User? user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .snapshots()
-          .listen((snapshot) {
-        if (snapshot.exists && snapshot.data() != null) {
-          final data = snapshot.data()!;
-          if (mounted) {
-            setState(() {
-              _currentUserName = data['name'] ?? "Blood Connect";
-            });
-          }
-        }
+
+    if (user == null) return;
+
+    _userProfileSubscription?.cancel();
+
+    _userProfileSubscription = FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .snapshots()
+        .listen((snapshot) {
+      if (!mounted) return;
+
+      if (snapshot.exists && snapshot.data() != null) {
+        final data = snapshot.data()!;
+
+        final String name = _readString(data, [
+          'name',
+          'user_name',
+          'full_name',
+        ]);
+
+        final String photoUrl = _readString(data, [
+          'photo_url',
+          'photoUrl',
+          'profile_image',
+          'profileImage',
+          'image_url',
+          'imageUrl',
+          'avatar',
+        ]);
+
+        setState(() {
+          _currentUserName = name.isNotEmpty ? name : "Blood Connect";
+          _currentUserPhotoUrl = photoUrl;
+        });
+      }
+    });
+  }
+
+  Future<void> _logout() async {
+    if (_isLoggingOut) return;
+
+    setState(() {
+      _isLoggingOut = true;
+    });
+
+    try {
+      await _userProfileSubscription?.cancel();
+      await FirebaseAuth.instance.signOut();
+      await AuthTokenService.clearSession();
+
+      if (!mounted) return;
+
+      Navigator.of(context).pushNamedAndRemoveUntil(
+        '/login',
+        (route) => false,
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _isLoggingOut = false;
       });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Logout failed: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
+  }
+
+  Widget _buildDrawerProfileAvatar() {
+    final bool hasPhoto = _currentUserPhotoUrl.trim().isNotEmpty;
+
+    if (!hasPhoto) {
+      return CircleAvatar(
+        radius: 45,
+        backgroundColor: Colors.white,
+        child: Text(
+          _profileInitial(),
+          style: const TextStyle(
+            color: Color(0xFF6B0000),
+            fontSize: 38,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      width: 90,
+      height: 90,
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        color: Colors.white,
+      ),
+      padding: const EdgeInsets.all(3),
+      child: ClipOval(
+        child: Image.network(
+          _currentUserPhotoUrl,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            return Container(
+              color: Colors.white,
+              alignment: Alignment.center,
+              child: Text(
+                _profileInitial(),
+                style: const TextStyle(
+                  color: Color(0xFF6B0000),
+                  fontSize: 38,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final List<Widget> _screens = [
+    final List<Widget> screens = [
       const DashboardContent(),
-      const SearchScreen(),
-      const PatientNotificationsScreen(),
+      const NotificationScreen(),
       ProfileTabContent(
         onBackToHome: () {
           setState(() {
@@ -79,16 +215,20 @@ class _HomeScreenState extends State<HomeScreen> {
           setState(() => _currentIndex = 0);
           return false;
         }
+
         return true;
       },
       child: Scaffold(
         drawer: _buildDrawer(),
-        body: _screens[_currentIndex],
+        body: screens[_currentIndex],
         bottomNavigationBar: Container(
           decoration: BoxDecoration(
             color: primaryMaroon,
             boxShadow: [
-              BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 10),
+              BoxShadow(
+                color: Colors.black.withOpacity(0.1),
+                blurRadius: 10,
+              ),
             ],
           ),
           child: BottomNavigationBar(
@@ -100,10 +240,18 @@ class _HomeScreenState extends State<HomeScreen> {
             type: BottomNavigationBarType.fixed,
             elevation: 0,
             items: const [
-              BottomNavigationBarItem(icon: Icon(Icons.home), label: "Home"),
-              BottomNavigationBarItem(icon: Icon(Icons.search), label: "Search"),
-              BottomNavigationBarItem(icon: Icon(Icons.notifications), label: "Notifications"),
-              BottomNavigationBarItem(icon: Icon(Icons.person), label: "Profile"),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.home),
+                label: "Home",
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.notifications),
+                label: "Notifications",
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.person),
+                label: "Profile",
+              ),
             ],
           ),
         ),
@@ -111,7 +259,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ==================== Drawer ====================
   Widget _buildDrawer() {
     return Drawer(
       child: Column(
@@ -122,16 +269,8 @@ class _HomeScreenState extends State<HomeScreen> {
             decoration: const BoxDecoration(color: primaryMaroon),
             child: Column(
               children: [
-                const CircleAvatar(
-                  radius: 45,
-                  backgroundColor: Colors.white,
-                  child: Icon(Icons.person, size: 55, color: Color(0xFF6B0000)),
-                ),
+                _buildDrawerProfileAvatar(),
                 const SizedBox(height: 12),
-                const Text(
-                  "Hello,",
-                  style: TextStyle(color: Colors.white, fontSize: 18),
-                ),
                 Text(
                   _currentUserName,
                   style: const TextStyle(
@@ -150,51 +289,89 @@ class _HomeScreenState extends State<HomeScreen> {
             child: ListView(
               padding: const EdgeInsets.symmetric(vertical: 8),
               children: [
-                _buildDrawerItem(Icons.list_alt_outlined, "View Requests", onTap: () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const BloodRequestsNearbyScreen()),
-                  );
-                }),
                 _buildDrawerItem(
-                  Icons.people_outline,
-                  "Find Volunteer",
+                  Icons.star_border,
+                  "Rate Us",
                   onTap: () {
                     Navigator.pop(context);
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (_) => const FindVolunteerScreen(),
+                        builder: (_) => const RateUsScreen(),
                       ),
                     );
                   },
                 ),
-                _buildDrawerItem(Icons.star_border, "Rate Us"),
-                _buildDrawerItem(Icons.info_outline, "About App"),
-                _buildDrawerItem(Icons.feedback_outlined, "Help/Feedback"),
-                const Divider(),
-                ListTile(
-                  leading: const Icon(Icons.logout, color: primaryMaroon),
-                  title: const Text(
-                    'Logout',
-                    style: TextStyle(
-                      color: primaryMaroon,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  onTap: () async {
+                _buildDrawerItem(
+                  Icons.info_outline,
+                  "About App",
+                  onTap: () {
                     Navigator.pop(context);
-                    await FirebaseAuth.instance.signOut();
-                    await AuthTokenService.clearSession();
-                    if (!mounted) return;
-                    Navigator.of(context).pushNamedAndRemoveUntil(
-                      '/login',
-                      (route) => false,
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const AboutAppScreen(),
+                      ),
+                    );
+                  },
+                ),
+                _buildDrawerItem(
+                  Icons.feedback_outlined,
+                  "Help/Feedback",
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const HelpFeedbackScreen(),
+                      ),
+                    );
+                  },
+                ),
+                _buildDrawerItem(
+                  Icons.settings_outlined,
+                  "Settings",
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const SettingsScreen(),
+                      ),
                     );
                   },
                 ),
               ],
+            ),
+          ),
+          const Divider(height: 1),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+              child: ListTile(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                leading: _isLoggingOut
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.3,
+                          color: primaryMaroon,
+                        ),
+                      )
+                    : const Icon(Icons.logout, color: primaryMaroon),
+                title: Text(
+                  _isLoggingOut ? 'Logging out...' : 'Logout',
+                  style: const TextStyle(
+                    color: primaryMaroon,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                onTap: _isLoggingOut ? null : _logout,
+              ),
             ),
           ),
         ],
@@ -209,7 +386,10 @@ class _HomeScreenState extends State<HomeScreen> {
     VoidCallback? onTap,
   }) {
     return ListTile(
-      leading: Icon(icon, color: isSelected ? primaryMaroon : Colors.black87),
+      leading: Icon(
+        icon,
+        color: isSelected ? primaryMaroon : Colors.black87,
+      ),
       title: Text(
         title,
         style: TextStyle(
@@ -221,9 +401,14 @@ class _HomeScreenState extends State<HomeScreen> {
       onTap: onTap ?? () => Navigator.pop(context),
     );
   }
+
+  @override
+  void dispose() {
+    _userProfileSubscription?.cancel();
+    super.dispose();
+  }
 }
 
-// ==================== Dashboard Content ====================
 class DashboardContent extends StatefulWidget {
   const DashboardContent({super.key});
 
@@ -245,6 +430,7 @@ class _DashboardContentState extends State<DashboardContent> {
   Future<void> _fetchBanners() async {
     try {
       final List<String> loadedUrls = await PatientBannerSdk.fetchBannerImages();
+
       if (!mounted) return;
 
       if (loadedUrls.isNotEmpty) {
@@ -252,6 +438,7 @@ class _DashboardContentState extends State<DashboardContent> {
           _carouselImages = loadedUrls;
           _isLoadingBanners = false;
         });
+
         return;
       }
     } catch (e) {
@@ -270,6 +457,66 @@ class _DashboardContentState extends State<DashboardContent> {
     });
   }
 
+  int _acceptedDonorsCount(QuerySnapshot<Map<String, dynamic>> snapshot) {
+    int count = 0;
+
+    for (final doc in snapshot.docs) {
+      final data = doc.data();
+
+      final String status = (data['status'] ?? data['request_status'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+
+      if (status == 'accepted') {
+        count++;
+      }
+    }
+
+    return count;
+  }
+
+  Widget _buildContactDonorsCard(BuildContext context) {
+    final User? user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      return _buildServiceCard(
+        title: "Contact Donors",
+        icon: Icons.call_rounded,
+        badgeCount: 0,
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const ContactDonorsScreen(),
+          ),
+        ),
+      );
+    }
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('donation_requests')
+          .where('patient_uid', isEqualTo: user.uid)
+          .snapshots(),
+      builder: (context, snapshot) {
+        final int acceptedCount =
+            snapshot.hasData ? _acceptedDonorsCount(snapshot.data!) : 0;
+
+        return _buildServiceCard(
+          title: "Contact Donors",
+          icon: Icons.call_rounded,
+          badgeCount: acceptedCount,
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const ContactDonorsScreen(),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -277,7 +524,11 @@ class _DashboardContentState extends State<DashboardContent> {
       appBar: AppBar(
         title: const Text(
           "BLOOD CONNECT",
-          style: TextStyle(fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: 0.5),
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            color: Colors.white,
+            letterSpacing: 0.5,
+          ),
         ),
         centerTitle: true,
         backgroundColor: primaryMaroon,
@@ -290,15 +541,15 @@ class _DashboardContentState extends State<DashboardContent> {
         actions: [
           IconButton(
             icon: const Icon(
-              Icons.notifications_none_rounded,
+              Icons.visibility_outlined,
               color: Colors.white,
-              size: 28,
+              size: 27,
             ),
             onPressed: () {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => const PatientNotificationsScreen(),
+                  builder: (_) => const IncomingBloodRequestsScreen(),
                 ),
               );
             },
@@ -335,30 +586,39 @@ class _DashboardContentState extends State<DashboardContent> {
                         ),
                         itemBuilder: (context, index, realIndex) {
                           final imagePathOrUrl = _carouselImages[index];
+
                           final bool isNetworkImage =
                               imagePathOrUrl.startsWith('http://') ||
-                              imagePathOrUrl.startsWith('https://');
+                                  imagePathOrUrl.startsWith('https://');
 
                           return isNetworkImage
                               ? Image.network(
                                   imagePathOrUrl,
                                   fit: BoxFit.cover,
                                   width: double.infinity,
-                                  errorBuilder: (context, error, stackTrace) =>
-                                      Container(
-                                        color: Colors.grey[300],
-                                        child: const Icon(Icons.broken_image, size: 60, color: Colors.grey),
-                                      ),
+                                  errorBuilder:
+                                      (context, error, stackTrace) => Container(
+                                    color: Colors.grey[300],
+                                    child: const Icon(
+                                      Icons.broken_image,
+                                      size: 60,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
                                 )
                               : Image.asset(
                                   imagePathOrUrl,
                                   fit: BoxFit.cover,
                                   width: double.infinity,
-                                  errorBuilder: (context, error, stackTrace) =>
-                                      Container(
-                                        color: Colors.grey[300],
-                                        child: const Icon(Icons.broken_image, size: 60, color: Colors.grey),
-                                      ),
+                                  errorBuilder:
+                                      (context, error, stackTrace) => Container(
+                                    color: Colors.grey[300],
+                                    child: const Icon(
+                                      Icons.broken_image,
+                                      size: 60,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
                                 );
                         },
                       ),
@@ -426,6 +686,7 @@ class _DashboardContentState extends State<DashboardContent> {
                       ),
                     ),
                   ),
+                  _buildContactDonorsCard(context),
                 ],
               ),
             ),
@@ -440,38 +701,67 @@ class _DashboardContentState extends State<DashboardContent> {
     required String title,
     required IconData icon,
     required VoidCallback onTap,
+    int badgeCount = 0,
   }) {
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          color: primaryMaroon,
-          borderRadius: BorderRadius.circular(22),
-          boxShadow: [
-            BoxShadow(
-              color: blackColor.withOpacity(0.06),
-              blurRadius: 16,
-              offset: const Offset(0, 6),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              color: primaryMaroon,
+              borderRadius: BorderRadius.circular(22),
+              boxShadow: [
+                BoxShadow(
+                  color: blackColor.withOpacity(0.06),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
+                ),
+              ],
             ),
-          ],
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 46, color: Colors.white),
-            const SizedBox(height: 10),
-            Text(
-              title,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
-                fontSize: 15,
-                letterSpacing: 0.2,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 46, color: Colors.white),
+                const SizedBox(height: 10),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                    letterSpacing: 0.2,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+          if (badgeCount > 0)
+            Positioned(
+              top: 12,
+              right: 12,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 9,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  badgeCount.toString(),
+                  style: const TextStyle(
+                    color: primaryMaroon,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
               ),
-              textAlign: TextAlign.center,
             ),
-          ],
-        ),
+        ],
       ),
     );
   }

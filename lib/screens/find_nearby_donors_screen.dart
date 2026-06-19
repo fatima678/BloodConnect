@@ -1,4 +1,4 @@
-// lib/screens/Patient/patient_find_nearby_donors.dart
+// lib/screens/find_nearby_donors_screen.dart
 
 import 'dart:async';
 
@@ -9,7 +9,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:blood_donation_app/theme.dart';
 import 'package:blood_donation_app/sdk/core/sdk_exception.dart';
-import 'package:blood_donation_app/sdk/patient/donation_request_sdk.dart';
+import 'package:blood_donation_app/sdk/donation_request_sdk.dart';
+
+import 'blood_request_screen.dart';
 
 class FindNearbyDonorsScreen extends StatefulWidget {
   static const String routeName = '/find-nearby-donors';
@@ -22,7 +24,8 @@ class FindNearbyDonorsScreen extends StatefulWidget {
   });
 
   @override
-  State<FindNearbyDonorsScreen> createState() => _FindNearbyDonorsScreenState();
+  State<FindNearbyDonorsScreen> createState() =>
+      _FindNearbyDonorsScreenState();
 }
 
 class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
@@ -45,7 +48,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
 
   final Set<String> _sendingDonorRequestIds = <String>{};
 
-  double _radius = 100.0;
+  double _radius = 5.0;
 
   String? _bloodRequestId;
   String? _requestBloodGroup;
@@ -77,29 +80,30 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
   ];
 
   List<Map<String, dynamic>> get filteredDonors {
-    List<Map<String, dynamic>> users = nearbyDonors;
+    List<Map<String, dynamic>> donors = nearbyDonors;
 
-    if (_selectedFilterBloodGroup != null &&
-        _selectedFilterBloodGroup!.trim().isNotEmpty) {
-      users = users.where((user) {
-        final userBloodGroup = _readString(
-          user,
+    final String? selectedBloodGroup = _selectedFilterBloodGroup;
+
+    if (selectedBloodGroup != null && selectedBloodGroup.trim().isNotEmpty) {
+      donors = donors.where((donor) {
+        final donorBloodGroup = _readString(
+          donor,
           [
-            'blood_group',
-            'blood_type',
-            'bloodGroup',
-            'donor_blood_group',
-            'donorBloodGroup',
+            "blood_group",
+            "blood_type",
+            "bloodGroup",
+            "donor_blood_group",
+            "donorBloodGroup",
           ],
         );
 
-        return _normalizeBloodGroup(userBloodGroup) ==
-            _normalizeBloodGroup(_selectedFilterBloodGroup);
+        return _normalizeBloodGroup(donorBloodGroup) ==
+            _normalizeBloodGroup(selectedBloodGroup);
       }).toList();
     }
 
-    users = users.where((user) {
-      final double? distanceKm = _readDistanceKm(user);
+    donors = donors.where((donor) {
+      final double? distanceKm = _readDistanceKm(donor);
 
       if (distanceKm == null) {
         return true;
@@ -108,7 +112,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
       return distanceKm <= _radius;
     }).toList();
 
-    return users;
+    return donors;
   }
 
   @override
@@ -142,10 +146,6 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     _loadInitialData();
   }
 
-  void _debug(String message) {
-    debugPrint('[NearbyDonorsDebug] $message');
-  }
-
   void _resolveBloodRequestId() {
     _bloodRequestId = widget.bloodRequestId;
 
@@ -153,7 +153,6 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
 
     if (args is String && args.trim().isNotEmpty) {
       _bloodRequestId = args.trim();
-      _debug('Route argument bloodRequestId=$_bloodRequestId');
       return;
     }
 
@@ -166,14 +165,11 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
 
       if (value != null && value.toString().trim().isNotEmpty) {
         _bloodRequestId = value.toString().trim();
-        _debug('Route map bloodRequestId=$_bloodRequestId');
       }
     }
   }
 
   Future<void> _loadInitialData() async {
-    _debug('loadInitialData started. initialBloodRequestId=$_bloodRequestId');
-
     if (mounted) {
       setState(() {
         _isInitialLoading = true;
@@ -185,8 +181,6 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     try {
       await _loadLatestBloodRequestIdIfNeeded();
 
-      _debug('After latest request resolve bloodRequestId=$_bloodRequestId');
-
       if (_bloodRequestId == null || _bloodRequestId!.trim().isEmpty) {
         if (mounted) {
           setState(() {
@@ -194,7 +188,6 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
             nearbyDonors = [];
           });
         }
-        _debug('No usable blood request found. Showing fill form card.');
         return;
       }
 
@@ -220,7 +213,6 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     final User? currentUser = _auth.currentUser;
 
     if (currentUser == null) {
-      _debug('No current auth user while loading latest blood request.');
       return;
     }
 
@@ -245,10 +237,6 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
         docs[doc.id] = doc;
       }
 
-      _debug(
-        'Latest request query completed. user_id=${userIdSnapshot.docs.length}, patient_uid=${patientUidSnapshot.docs.length}, merged=${docs.length}',
-      );
-
       final List<Map<String, dynamic>> activeRequests = [];
 
       for (final doc in docs.values) {
@@ -259,13 +247,6 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
 
         if (_isUsableBloodRequest(data)) {
           activeRequests.add(data);
-        } else {
-          _debug(
-            'Skipping unusable blood request docId=${doc.id}, status=${_readString(data, [
-                  'status',
-                  'request_status',
-                ])}, is_active=${data['is_active']}',
-          );
         }
       }
 
@@ -280,20 +261,9 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
         if (_bloodRequestId == null || _bloodRequestId!.isEmpty) {
           _bloodRequestId = activeRequests.first['id']?.toString().trim();
         }
-
-        _debug('Latest active blood request selected=$_bloodRequestId');
-        return;
-      }
-
-      final prefs = await SharedPreferences.getInstance();
-      final savedId = prefs.getString(_latestActiveBloodRequestIdKey);
-
-      if (savedId != null && savedId.trim().isNotEmpty) {
-        _bloodRequestId = savedId.trim();
-        _debug('Fallback SharedPreferences bloodRequestId=$_bloodRequestId');
       }
     } catch (e) {
-      _debug('Load latest blood request error: $e');
+      debugPrint('Load latest blood request error: $e');
     }
   }
 
@@ -402,10 +372,10 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
   }
 
   double? _readDistanceKm(Map<String, dynamic> donor) {
-    final value = donor['route_distance_km'] ??
-        donor['distance_km'] ??
-        donor['distanceKm'] ??
-        donor['distance'];
+    final value = donor["route_distance_km"] ??
+        donor["distance_km"] ??
+        donor["distanceKm"] ??
+        donor["distance"];
 
     if (value == null) return null;
 
@@ -417,10 +387,10 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
             ?.toString()
             .trim()
             .toUpperCase()
-            .replaceAll(' ', '')
-            .replaceAll('POSITIVE', '+')
-            .replaceAll('NEGATIVE', '-') ??
-        '';
+            .replaceAll(" ", "")
+            .replaceAll("POSITIVE", "+")
+            .replaceAll("NEGATIVE", "-") ??
+        "";
   }
 
   String? _extractCityFromLocation(String? location) {
@@ -429,14 +399,9 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     final parts = location.split(',');
 
     if (parts.isNotEmpty) {
-      for (final part in parts) {
-        final city = part.trim();
-        final lowerCity = city.toLowerCase();
+      final city = parts.first.trim();
 
-        if (city.isEmpty) continue;
-        if (lowerCity == 'pakistan' || lowerCity == 'punjab') continue;
-        if (_looksLikeCoordinates(city)) continue;
-
+      if (city.isNotEmpty && !_looksLikeCoordinates(city)) {
         return city;
       }
     }
@@ -460,71 +425,83 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     return coordinatePattern.hasMatch(text) || numberOnlyPattern.hasMatch(text);
   }
 
+  Map<String, dynamic>? _historyForDonor(String donorRequestId) {
+    if (donorRequestId.trim().isEmpty) {
+      return null;
+    }
+
+    for (final item in requestHistory) {
+      if (item['donor_request_id']?.toString() == donorRequestId ||
+          item['donor_uid']?.toString() == donorRequestId ||
+          item['donor_id']?.toString() == donorRequestId) {
+        return item;
+      }
+    }
+
+    return null;
+  }
+
   void _setBloodRequestMeta(Map<String, dynamic> bloodRequest) {
     final String? bloodGroup = _readString(
       bloodRequest,
       [
-        'blood_group',
-        'bloodGroup',
-        'patient_blood_group',
-        'patientBloodGroup',
+        "blood_group",
+        "bloodGroup",
+        "patient_blood_group",
+        "patientBloodGroup",
       ],
     );
 
     final String? city = _readString(
       bloodRequest,
       [
-        'city',
-        'current_city',
-        'currentCity',
-        'patient_city',
-        'patientCity',
+        "city",
+        "current_city",
+        "currentCity",
+        "patient_city",
+        "patientCity",
       ],
     );
 
     final String? location = _readString(
       bloodRequest,
       [
-        'location',
-        'current_location',
-        'currentLocation',
-        'address',
-        'patient_location',
-        'patientLocation',
+        "location",
+        "current_location",
+        "currentLocation",
+        "address",
+        "patient_location",
+        "patientLocation",
       ],
     );
 
     final String? hospital = _readString(
       bloodRequest,
       [
-        'hospital_name',
-        'hospitalName',
-        'hospital',
+        "hospital_name",
+        "hospitalName",
+        "hospital",
       ],
     );
 
     final double? latitude = _readDouble(
       bloodRequest,
       [
-        'latitude',
-        'lat',
-        'patient_latitude',
-        'patientLatitude',
+        "latitude",
+        "lat",
+        "patient_latitude",
+        "patientLatitude",
       ],
     );
 
     final double? longitude = _readDouble(
       bloodRequest,
       [
-        'longitude',
-        'lng',
-        'patient_longitude',
-        'patientLongitude',
+        "longitude",
+        "lng",
+        "patient_longitude",
+        "patientLongitude",
       ],
-    );
-
-    _debug(
-      'Request meta set -> bloodGroup=$bloodGroup, city=$city, location=$location, hospital=$hospital, lat=$latitude, lng=$longitude',
     );
 
     setState(() {
@@ -537,14 +514,84 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     });
   }
 
+  Future<Map<String, dynamic>?> _fetchCurrentBloodRequest() async {
+    if (_bloodRequestId == null || _bloodRequestId!.trim().isEmpty) {
+      return null;
+    }
+
+    final bloodRequest = await DonationRequestFlowSdk.fetchBloodRequest(
+      bloodRequestId: _bloodRequestId!.trim(),
+    );
+
+    _setBloodRequestMeta(bloodRequest);
+
+    return bloodRequest;
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchUsersFromRequestLocation() async {
+    final bloodRequest = await _fetchCurrentBloodRequest();
+
+    if (bloodRequest == null) {
+      return [];
+    }
+
+    final String? city = _readString(
+      bloodRequest,
+      [
+        "city",
+        "current_city",
+        "currentCity",
+        "patient_city",
+        "patientCity",
+      ],
+    );
+
+    final String? location = _readString(
+      bloodRequest,
+      [
+        "location",
+        "current_location",
+        "currentLocation",
+        "address",
+        "patient_location",
+        "patientLocation",
+      ],
+    );
+
+    final double? latitude = _readDouble(
+      bloodRequest,
+      [
+        "latitude",
+        "lat",
+        "patient_latitude",
+        "patientLatitude",
+      ],
+    );
+
+    final double? longitude = _readDouble(
+      bloodRequest,
+      [
+        "longitude",
+        "lng",
+        "patient_longitude",
+        "patientLongitude",
+      ],
+    );
+
+    return DonationRequestFlowSdk.fetchAvailableDonors(
+      bloodGroup: _selectedFilterBloodGroup,
+      requestLatitude: latitude,
+      requestLongitude: longitude,
+      requestCity: city ?? _extractCityFromLocation(location),
+      requestLocation: location,
+      radiusKm: _radius,
+    );
+  }
+
   void _startDonorsLiveListener() {
     _donorsSubscription?.cancel();
 
-    _debug(
-      'Starting live users listener -> optionalBloodFilter=$_selectedFilterBloodGroup, requestLat=$_requestLatitude, requestLng=$_requestLongitude, requestCity=$_requestCity, requestLocation=$_requestLocation, radius=$_radius',
-    );
-
-    _donorsSubscription = DonationRequestSdk.watchAvailableDonors(
+    _donorsSubscription = DonationRequestFlowSdk.watchAvailableDonors(
       bloodGroup: _selectedFilterBloodGroup,
       requestLatitude: _requestLatitude,
       requestLongitude: _requestLongitude,
@@ -554,8 +601,6 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     ).listen(
       (donors) {
         if (!mounted) return;
-
-        _debug('Live listener returned users=${donors.length}');
 
         setState(() {
           nearbyDonors = donors;
@@ -567,10 +612,8 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
       onError: (error) {
         if (!mounted) return;
 
-        _debug('Live listener error=$error');
-
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Donors Error: $error')),
+          SnackBar(content: Text("Donors Error: $error")),
         );
       },
     );
@@ -597,35 +640,21 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
             nearbyDonors = [];
           });
         }
-        _debug('fetchNearbyDonors stopped because bloodRequestId is empty.');
         return;
       }
 
-      _debug(
-        'Fetching initial nearby users for bloodRequestId=$_bloodRequestId, optionalBloodFilter=$_selectedFilterBloodGroup',
-      );
-
-      final result = await DonationRequestSdk.fetchNearbyDonors(
-        bloodRequestId: _bloodRequestId!.trim(),
-        bloodGroup: _selectedFilterBloodGroup,
-        radiusKm: _radius,
-      );
+      final donors = await _fetchUsersFromRequestLocation();
 
       if (!mounted) return;
 
-      _setBloodRequestMeta(result.bloodRequest);
       await _saveLatestActiveBloodRequestId(_bloodRequestId!.trim());
-
-      _debug('Initial nearby users returned=${result.donors.length}');
 
       setState(() {
         _needsBloodRequestForm = false;
-        nearbyDonors = result.donors;
+        nearbyDonors = donors;
       });
     } on SdkException catch (e) {
       if (!mounted) return;
-
-      _debug('SDK error while fetching nearby users: ${e.message}');
 
       if (e.message.toLowerCase().contains('blood request not found') ||
           e.message.toLowerCase().contains('not pending')) {
@@ -655,10 +684,8 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     } catch (e) {
       if (!mounted) return;
 
-      _debug('Unknown error while fetching nearby users: $e');
-
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
+        SnackBar(content: Text("Error: $e")),
       );
     } finally {
       if (mounted) {
@@ -681,13 +708,11 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     }
 
     try {
-      final list = await DonationRequestSdk.fetchRequestHistory(
+      final list = await DonationRequestFlowSdk.fetchRequestHistory(
         bloodRequestId: _bloodRequestId,
       );
 
       if (!mounted) return;
-
-      _debug('Request history returned=${list.length}');
 
       setState(() {
         requestHistory = list;
@@ -695,18 +720,14 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     } on SdkException catch (e) {
       if (!mounted) return;
 
-      _debug('SDK error while fetching history: ${e.message}');
-
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(e.message)),
       );
     } catch (e) {
       if (!mounted) return;
 
-      _debug('Unknown history error: $e');
-
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('History Error: $e')),
+        SnackBar(content: Text("History Error: $e")),
       );
     } finally {
       if (showLoader && mounted) {
@@ -716,13 +737,13 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
   }
 
   String _formatDistance(dynamic value) {
-    if (value == null) return 'N/A';
+    if (value == null) return "N/A";
 
     final double? distance = double.tryParse(value.toString());
 
-    if (distance == null) return 'N/A';
+    if (distance == null) return "N/A";
 
-    return '${distance.toStringAsFixed(2)} km';
+    return "${distance.toStringAsFixed(2)} km";
   }
 
   String _formatRouteDuration(Map<String, dynamic> donor) {
@@ -757,7 +778,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
 
   String _formatLastDonation(dynamic value) {
     if (value == null || value.toString().trim().isEmpty) {
-      return 'Not provided';
+      return "Not provided";
     }
 
     return value.toString();
@@ -766,12 +787,12 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
   Color _statusColor(String status) {
     final lowerStatus = status.toLowerCase();
 
-    if (lowerStatus == 'accepted') return Colors.green;
-    if (lowerStatus == 'pending') return Colors.orange;
-    if (lowerStatus == 'rejected' || lowerStatus == 'declined') {
+    if (lowerStatus == "accepted") return Colors.green;
+    if (lowerStatus == "pending") return Colors.orange;
+    if (lowerStatus == "rejected" || lowerStatus == "declined") {
       return Colors.red;
     }
-    if (lowerStatus == 'active' || lowerStatus.contains('available')) {
+    if (lowerStatus == "active" || lowerStatus.contains("available")) {
       return Colors.green;
     }
 
@@ -781,12 +802,12 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
   String _statusText(String status) {
     final lowerStatus = status.toLowerCase();
 
-    if (lowerStatus == 'pending') return 'Pending';
-    if (lowerStatus == 'accepted') return 'Accepted';
-    if (lowerStatus == 'rejected') return 'Rejected';
-    if (lowerStatus == 'declined') return 'Declined';
+    if (lowerStatus == "pending") return "Pending";
+    if (lowerStatus == "accepted") return "Accepted";
+    if (lowerStatus == "rejected") return "Rejected";
+    if (lowerStatus == "declined") return "Declined";
 
-    return status.trim().isEmpty ? 'N/A' : status;
+    return status.trim().isEmpty ? "N/A" : status;
   }
 
   Future<void> _showRequestSuccessCard() async {
@@ -815,7 +836,6 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
         _needsBloodRequestForm = true;
         nearbyDonors = [];
       });
-      _debug('Send request stopped because bloodRequestId is empty.');
       return;
     }
 
@@ -823,7 +843,16 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
 
     if (donorRequestId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('User ID missing.')),
+        const SnackBar(content: Text("User ID missing.")),
+      );
+      return;
+    }
+
+    final alreadySentRequest = _historyForDonor(donorRequestId);
+
+    if (alreadySentRequest != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Request already sent to this user.")),
       );
       return;
     }
@@ -832,14 +861,12 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
       return;
     }
 
-    _debug('Sending request to userDocId=$donorRequestId');
-
     setState(() {
       _sendingDonorRequestIds.add(donorRequestId);
     });
 
     try {
-      await DonationRequestSdk.sendRequestToDonor(
+      await DonationRequestFlowSdk.sendRequestToDonor(
         bloodRequestId: _bloodRequestId!.trim(),
         donorRequestId: donorRequestId,
         message: 'Blood is needed urgently.',
@@ -862,8 +889,6 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
       _showHistorySheet();
     } on SdkException catch (e) {
       if (!mounted) return;
-
-      _debug('SDK error while sending request: ${e.message}');
 
       if (e.message.toLowerCase().contains('not pending')) {
         await _clearLatestActiveBloodRequestId();
@@ -892,10 +917,8 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
     } catch (e) {
       if (!mounted) return;
 
-      _debug('Unknown error while sending request: $e');
-
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
+        SnackBar(content: Text("Error: $e")),
       );
     } finally {
       if (mounted) {
@@ -950,7 +973,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                         children: [
                           const Expanded(
                             child: Text(
-                              'Your Request History',
+                              "Your Request History",
                               style: TextStyle(
                                 fontSize: 20,
                                 fontWeight: FontWeight.bold,
@@ -971,7 +994,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                           : requestHistory.isEmpty
                               ? const Center(
                                   child: Text(
-                                    'No request history found.',
+                                    "No request history found.",
                                     style: TextStyle(color: Colors.black54),
                                   ),
                                 )
@@ -1005,7 +1028,12 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
   }
 
   Future<void> _openBloodRequestForm() async {
-    await Navigator.pushNamed(context, '/blood_request');
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const BloodRequestScreen(),
+      ),
+    );
 
     if (!mounted) return;
 
@@ -1058,7 +1086,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
             ),
             const SizedBox(height: 16),
             const Text(
-              'Fill the form to find nearby donors',
+              "Fill the form to find nearby donors",
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 18,
@@ -1068,7 +1096,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
             ),
             const SizedBox(height: 8),
             const Text(
-              'Submit a blood request first. Users will be shown according to the blood request location and selected radius.',
+              "Submit a blood request first. Users will be shown according to location selected in your form.",
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 13,
@@ -1089,7 +1117,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                   ),
                 ),
                 child: const Text(
-                  'Fill Blood Request Form',
+                  "Fill Blood Request Form",
                   style: TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -1144,7 +1172,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                 ),
                 SizedBox(height: 14),
                 Text(
-                  'Request sent successfully.',
+                  "Request sent successfully.",
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.green,
@@ -1154,7 +1182,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                 ),
                 SizedBox(height: 6),
                 Text(
-                  'Moved to request history.',
+                  "Moved to request history.",
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.black54,
@@ -1241,13 +1269,13 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
             ),
             const SizedBox(height: 10),
             Text(
-              'Message: $message',
+              "Message: $message",
               style: const TextStyle(color: Colors.black54),
             ),
             if (phoneVisible && donorPhone.isNotEmpty) ...[
               const SizedBox(height: 8),
               Text(
-                'Phone: $donorPhone',
+                "Phone: $donorPhone",
                 style: const TextStyle(
                   color: Colors.green,
                   fontWeight: FontWeight.bold,
@@ -1257,7 +1285,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
             if (!phoneVisible) ...[
               const SizedBox(height: 8),
               const Text(
-                'Phone will be visible after acceptance.',
+                "Phone will be visible after acceptance.",
                 style: TextStyle(
                   color: Colors.orange,
                   fontWeight: FontWeight.w500,
@@ -1306,11 +1334,11 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
   }
 
   Widget _buildDonorCard(Map<String, dynamic> donor) {
-    final String name = _readString(donor, ['name', 'user_name']) ?? 'N/A';
+    final String name = _readString(donor, ['name', 'user_name']) ?? "N/A";
 
     final String bloodGroup =
         _readString(donor, ['blood_group', 'blood_type', 'bloodGroup']) ??
-            'N/A';
+            "N/A";
 
     final String location = _readString(
           donor,
@@ -1323,23 +1351,31 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
             'location',
           ],
         ) ??
-        'N/A';
+        "N/A";
 
     final String distance = _formatDistance(
-      donor['route_distance_km'] ?? donor['distance_km'],
+      donor["route_distance_km"] ?? donor["distance_km"],
     );
 
     final String drivingTime = _formatRouteDuration(donor);
 
     final String lastDonation = _formatLastDonation(
-      donor['last_donated_date'],
+      donor["last_donated_date"],
     );
 
-    final String status = donor['status']?.toString() ?? 'Active';
+    final String status = donor["status"]?.toString() ?? "Active";
 
     final String donorRequestId = _getDonorRequestId(donor);
     final bool isThisDonorSending =
         _sendingDonorRequestIds.contains(donorRequestId);
+
+    final Map<String, dynamic>? history = _historyForDonor(donorRequestId);
+    final bool isAlreadyRequested = history != null;
+
+    final String historyStatus =
+        history?['status']?.toString() ??
+            history?['request_status']?.toString() ??
+            '';
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -1376,36 +1412,40 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                   ),
                   _buildInfoRow(
                     icon: Icons.route,
-                    text: 'Distance: $distance',
+                    text: "Distance: $distance",
                     color: Colors.black87,
                     fontWeight: FontWeight.w500,
                     maxLines: 1,
                   ),
                   _buildInfoRow(
                     icon: Icons.access_time,
-                    text: 'Estimated Time: $drivingTime',
+                    text: "Estimated Time: $drivingTime",
                     color: Colors.black87,
                     fontWeight: FontWeight.w500,
                     maxLines: 1,
                   ),
                   _buildInfoRow(
                     icon: Icons.calendar_month,
-                    text: 'Last donated: $lastDonation',
+                    text: "Last donated: $lastDonation",
                     color: Colors.black54,
                     maxLines: 1,
                   ),
                   _buildInfoRow(
                     icon: Icons.location_on,
-                    text: 'Location: $location',
+                    text: "Location: $location",
                     color: Colors.black54,
                     maxLines: 2,
                   ),
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Text(
-                      status,
+                      isAlreadyRequested
+                          ? "Request ${_statusText(historyStatus)}"
+                          : status,
                       style: TextStyle(
-                        color: _statusColor(status),
+                        color: isAlreadyRequested
+                            ? _statusColor(historyStatus)
+                            : _statusColor(status),
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -1414,7 +1454,9 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                   SizedBox(
                     height: 38,
                     child: ElevatedButton(
-                      onPressed: isThisDonorSending || _showSuccessCard
+                      onPressed: isThisDonorSending ||
+                              _showSuccessCard ||
+                              isAlreadyRequested
                           ? null
                           : () => _sendRequest(donor),
                       style: ElevatedButton.styleFrom(
@@ -1426,7 +1468,11 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                         ),
                       ),
                       child: Text(
-                        isThisDonorSending ? 'Sending...' : 'Send Request',
+                        isThisDonorSending
+                            ? "Sending..."
+                            : isAlreadyRequested
+                                ? "Requested"
+                                : "Send Request",
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
@@ -1444,27 +1490,29 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
   }
 
   String _headerText() {
-    if (_selectedFilterBloodGroup != null &&
-        _selectedFilterBloodGroup!.trim().isNotEmpty) {
-      return '${filteredDonors.length} $_selectedFilterBloodGroup Users Nearby';
+    final String bloodGroupText = _selectedFilterBloodGroup ?? '';
+
+    if (bloodGroupText.trim().isEmpty) {
+      return "${filteredDonors.length} Users Nearby";
     }
 
-    return '${filteredDonors.length} Users Nearby';
+    return "${filteredDonors.length} $bloodGroupText Users Nearby";
   }
 
   String _emptyText() {
-    if (_isInitialLoading) return '';
+    if (_isInitialLoading) return "";
 
     if (_bloodRequestId == null || _bloodRequestId!.trim().isEmpty) {
-      return 'Fill the form to find nearby users';
+      return "Fill the form to find nearby users";
     }
 
-    if (_selectedFilterBloodGroup != null &&
-        _selectedFilterBloodGroup!.trim().isNotEmpty) {
-      return 'No nearby users found for $_selectedFilterBloodGroup';
+    final String bloodGroupText = _selectedFilterBloodGroup ?? '';
+
+    if (bloodGroupText.trim().isEmpty) {
+      return "No nearby users found";
     }
 
-    return 'No nearby users found in selected radius';
+    return "No nearby users found for $bloodGroupText";
   }
 
   @override
@@ -1490,7 +1538,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Find Nearby Donors'),
+        title: const Text("Find Nearby Donors"),
         backgroundColor: primaryMaroon,
         foregroundColor: Colors.white,
         elevation: 0,
@@ -1506,8 +1554,8 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
             ),
             label: Text(
               pendingCount > 0
-                  ? 'Your History ($pendingCount)'
-                  : 'Your History',
+                  ? "Your History ($pendingCount)"
+                  : "",
               style: const TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,
@@ -1540,7 +1588,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                       children: [
                         if (_hospitalName != null)
                           Text(
-                            'Hospital: $_hospitalName',
+                            "Hospital: $_hospitalName",
                             style: const TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 13,
@@ -1549,7 +1597,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                         if (_requestLocation != null) ...[
                           const SizedBox(height: 4),
                           Text(
-                            'Request Location: $_requestLocation',
+                            "Request Location: $_requestLocation",
                             style: const TextStyle(
                               color: Colors.black54,
                               fontSize: 12,
@@ -1559,7 +1607,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                         if (_requestBloodGroup != null) ...[
                           const SizedBox(height: 4),
                           Text(
-                            'Request Blood Group: $_requestBloodGroup',
+                            "Required Blood Group: $_requestBloodGroup",
                             style: const TextStyle(
                               color: primaryMaroon,
                               fontWeight: FontWeight.w600,
@@ -1574,24 +1622,33 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                   padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
                   child: DropdownButtonFormField<String>(
                     value: _selectedFilterBloodGroup,
+                    hint: const Text('All Blood Types'),
                     decoration: const InputDecoration(
-                      labelText: 'Optional Blood Type Filter',
+                      labelText: 'Filter Blood Type',
                       prefixIcon: Icon(Icons.bloodtype),
                       border: OutlineInputBorder(),
                     ),
-                    items: bloodGroups
-                        .map(
-                          (group) => DropdownMenuItem(
-                            value: group,
-                            child: Text(group),
-                          ),
-                        )
-                        .toList(),
+                    items: [
+                      const DropdownMenuItem(
+                        value: 'ALL',
+                        child: Text('All Blood Types'),
+                      ),
+                      ...bloodGroups.map(
+                        (group) => DropdownMenuItem(
+                          value: group,
+                          child: Text(group),
+                        ),
+                      ),
+                    ],
                     onChanged: _showSuccessCard
                         ? null
                         : (value) {
                             setState(() {
-                              _selectedFilterBloodGroup = value;
+                              if (value == 'ALL') {
+                                _selectedFilterBloodGroup = null;
+                              } else {
+                                _selectedFilterBloodGroup = value;
+                              }
                             });
 
                             _fetchNearbyDonors(showLoader: false);
@@ -1599,27 +1656,6 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                           },
                   ),
                 ),
-                if (_selectedFilterBloodGroup != null)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton.icon(
-                        onPressed: _showSuccessCard
-                            ? null
-                            : () {
-                                setState(() {
-                                  _selectedFilterBloodGroup = null;
-                                });
-
-                                _fetchNearbyDonors(showLoader: false);
-                                _startDonorsLiveListener();
-                              },
-                        icon: const Icon(Icons.clear, size: 18),
-                        label: const Text('Clear filter'),
-                      ),
-                    ),
-                  ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
                   child: Column(
@@ -1627,11 +1663,11 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                       Row(
                         children: [
                           const Text(
-                            'Radius',
+                            "Radius",
                             style: TextStyle(fontWeight: FontWeight.bold),
                           ),
                           const Spacer(),
-                          Text('${_radius.round()} km'),
+                          Text("${_radius.round()} km"),
                         ],
                       ),
                       Slider(
@@ -1639,7 +1675,7 @@ class _FindNearbyDonorsScreenState extends State<FindNearbyDonorsScreen>
                         min: 5,
                         max: 100,
                         divisions: 19,
-                        label: '${_radius.round()} km',
+                        label: "${_radius.round()} km",
                         activeColor: primaryMaroon,
                         onChanged: _showSuccessCard
                             ? null

@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
-import '../../theme.dart';
-import '../../sdk/patient/blood_bank_sdk.dart';
-import '../../sdk/core/sdk_exception.dart';
-import './patient_blood_bank_map_screen.dart';
+import '../theme.dart';
+import '../sdk/patient/blood_bank_sdk.dart';
+import '../sdk/core/sdk_exception.dart';
+import 'Patient/patient_blood_bank_map_screen.dart';
 
 class BloodBankScreen extends StatefulWidget {
   static const String routeName = '/blood_bank';

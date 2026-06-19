@@ -7,6 +7,25 @@
   "client": [
     {
       "client_info": {
+        "mobilesdk_app_id": "1:801148267390:android:be9db7fb8502297d4de12f",
+        "android_client_info": {
+          "package_name": "com.eagalesoft.blood_donation_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBjm4_xAPHwTFYgSAoUwv-6XF0iyTnuAt4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
         "mobilesdk_app_id": "1:801148267390:android:d31a138ecfaca7904de12f",
         "android_client_info": {
           "package_name": "com.example.blood_donation_app"

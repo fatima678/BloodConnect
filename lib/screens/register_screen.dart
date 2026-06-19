@@ -52,12 +52,16 @@ class _registerState extends State<register> {
         .replaceFirst('Z', '+00:00');
   }
 
+  String _cleanPhone(String phone) {
+    return phone.trim().replaceAll(' ', '').replaceAll('-', '');
+  }
+
   String _firebaseErrorMessage(FirebaseAuthException e) {
     switch (e.code) {
       case 'invalid-email':
         return 'Please enter a valid email address.';
       case 'email-already-in-use':
-        return 'This email is already registered.';
+        return 'This email is already registered. Please login.';
       case 'weak-password':
         return 'Password should be at least 6 characters.';
       case 'network-request-failed':
@@ -67,12 +71,32 @@ class _registerState extends State<register> {
     }
   }
 
+  Future<bool> _emailAlreadyExists(String email) async {
+    final QuerySnapshot<Map<String, dynamic>> snapshot = await _firestore
+        .collection('users')
+        .where('email', isEqualTo: email)
+        .limit(1)
+        .get();
+
+    return snapshot.docs.isNotEmpty;
+  }
+
+  Future<bool> _phoneAlreadyExists(String phone) async {
+    final QuerySnapshot<Map<String, dynamic>> snapshot = await _firestore
+        .collection('users')
+        .where('phone', isEqualTo: phone)
+        .limit(1)
+        .get();
+
+    return snapshot.docs.isNotEmpty;
+  }
+
   Future<void> registerUser() async {
     FocusScope.of(context).unfocus();
 
     final String name = nameController.text.trim();
     final String email = emailController.text.trim().toLowerCase();
-    final String phone = phoneController.text.trim();
+    final String phone = _cleanPhone(phoneController.text);
     final String password = passwordController.text.trim();
     final String confirmPassword = confirmPasswordController.text.trim();
 
@@ -82,6 +106,11 @@ class _registerState extends State<register> {
         password.isEmpty ||
         confirmPassword.isEmpty) {
       showMessage(message: "Please fill all fields");
+      return;
+    }
+
+    if (!RegExp(r'^\d{11}$').hasMatch(phone)) {
+      showMessage(message: "Phone number must be exactly 11 digits.");
       return;
     }
 
@@ -100,6 +129,32 @@ class _registerState extends State<register> {
     User? createdUser;
 
     try {
+      final bool emailExists = await _emailAlreadyExists(email);
+
+      if (emailExists) {
+        if (!mounted) return;
+
+        setState(() => isLoading = false);
+
+        showMessage(
+          message: 'This email is already registered. Please login.',
+        );
+        return;
+      }
+
+      final bool phoneExists = await _phoneAlreadyExists(phone);
+
+      if (phoneExists) {
+        if (!mounted) return;
+
+        setState(() => isLoading = false);
+
+        showMessage(
+          message: 'This phone number is already registered. Please login.',
+        );
+        return;
+      }
+
       final UserCredential credential =
           await _auth.createUserWithEmailAndPassword(
         email: email,
@@ -117,7 +172,6 @@ class _registerState extends State<register> {
       final String uid = createdUser.uid;
       final String now = _now();
 
-      // Direct write to global 'users' collection with default structural flags
       await _firestore.collection('users').doc(uid).set({
         'uid': uid,
         'name': name,
@@ -125,12 +179,11 @@ class _registerState extends State<register> {
         'phone': phone,
         'created_at': now,
         'updated_at': now,
-        'status': 'active', // Default status for general user access
-        'blood_group': '',   // Initial empty profile state (to be selected inside app)
+        'status': 'active',
+        'blood_group': '',
         'points': 0,
+        'is_phone_verified': false,
       });
-
-      await createdUser.sendEmailVerification();
 
       await _auth.signOut();
 
@@ -142,7 +195,7 @@ class _registerState extends State<register> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Registration successful.',
+            'Registration successful. Please login.',
           ),
           backgroundColor: primaryMaroon,
           behavior: SnackBarBehavior.floating,
@@ -162,7 +215,7 @@ class _registerState extends State<register> {
 
       showMessage(message: _firebaseErrorMessage(e));
     } catch (e) {
-      if (createdUser != null && !createdUser.emailVerified) {
+      if (createdUser != null) {
         try {
           await createdUser.delete();
         } catch (_) {}
@@ -194,7 +247,7 @@ class _registerState extends State<register> {
         child: Column(
           children: [
             SizedBox(
-              height: topPadding + 690, // Reduced height dynamically as role selection dropdown is removed
+              height: topPadding + 690,
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
